@@ -2,25 +2,11 @@
 pragma solidity ^0.8.13;
 
 import {ICrossChainCaller} from "./ICrossChainCaller.sol";
+import {LibTransient} from "solady/utils/LibTransient.sol";
 
 contract CrossChainCaller is ICrossChainCaller {
     uint256 private _globalXCallNonce;
     uint256 private _chainId;
-
-    /// @notice Rolling hash of all tx hashes sent to other chains.
-    mapping(uint256 chainId_ => bytes32 rollingHash) private _transactionsOutbox;
-
-    /// @notice Rolling hash of all tx hashes received from other chains.
-    mapping(uint256 chainId_ => bytes32 rollingHash) private _transactionsInbox;
-
-    /// @notice Rolling hash of result values from txs executed for other chains.
-    mapping(uint256 chainId_ => bytes32 rollingHash) private _resultsOutbox;
-
-    /// @notice Rolling hash of result values received from execution on other chains.
-    mapping(uint256 chainId_ => bytes32 rollingHash) private _resultsInbox;
-
-    /// @notice Ephemeral mapping of result values received from execution on other chains.
-    mapping(uint256 chainId_ => mapping(bytes32 txHash => bytes result)) private _resultsInboxValues;
 
     constructor(uint256 chainId_) {
         _chainId = chainId_;
@@ -35,14 +21,14 @@ contract CrossChainCaller is ICrossChainCaller {
         bytes32 txHash = getTransactionHash(_chainId, targetChainId, from, nonce, txn);
 
         // Update rolling hash with txHash
-        _updateTransactionOutbox(targetChainId, txHash);
+        _updateRollingHash(targetChainId, txHash, MailboxType.TRANSACTIONS_OUTBOX);
 
         // Emit a full log of the cross-chain call
         // This is how the sequencer generates the privileged transaction
         emit CrossChainCall(targetChainId, from, txn.to, nonce, txn.value, txn.gasLimit, txn.data);
 
         // Read prefilled result from inbox (already simulated by sequencer)
-        return _readResultsInbox(targetChainId, txHash);
+        return _readResultInboxValue(targetChainId, txHash);
     }
 
     /// @inheritdoc ICrossChainCaller
@@ -51,20 +37,25 @@ contract CrossChainCaller is ICrossChainCaller {
         bytes32 txHash = getTransactionHash(sourceChainId, _chainId, from, nonce, txn);
 
         // Update rolling inbox hash
-        _updateTransactionsInbox(sourceChainId, txHash);
+        _updateRollingHash(sourceChainId, txHash, MailboxType.TRANSACTIONS_INBOX);
 
         // Execute local call
         (bool success, bytes memory result) = txn.to.call{gas: txn.gasLimit, value: txn.value}(txn.data);
         require(success, "Cross-chain call failed");
 
         // Update rolling result outbox hash
-        _updateResultsOutbox(sourceChainId, keccak256(result));
+        _updateRollingHash(sourceChainId, keccak256(result), MailboxType.RESULTS_OUTBOX);
 
         // Emit for sequencer to populate destination resultsInboxValues
         emit CrossChainCallExecuted(txHash, result);
     }
 
-
+    /// @notice Generates a unique transaction hash for a cross-chain call
+    /// @param sourceChainId The chain ID where the cross-chain call originated from
+    /// @param targetChainId The chain ID where the cross-chain call is handled
+    /// @param from The address that initiated the cross-chain call on the source chain
+    /// @param nonce The unique nonce for this cross-chain message
+    /// @param txn Encapsulates target address, gas limit, value, and calldata
     function getTransactionHash(
         uint256 sourceChainId,
         uint256 targetChainId,
@@ -86,69 +77,85 @@ contract CrossChainCaller is ICrossChainCaller {
         );
     }
 
+    /// @inheritdoc ICrossChainCaller
     function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results)
         external
     {
         require(txHashes.length == results.length, "txHashes and results must have the same length");
         require(chainIds.length == txHashes.length, "chainIds and txHashes must have the same length");
         for (uint256 i = 0; i < txHashes.length; i++) {
-            // Update values mapping
-            _resultsInboxValues[chainIds[i]][txHashes[i]] = results[i];
-
-            // Update rolling hash
-            _resultsInbox[chainIds[i]] = keccak256(abi.encodePacked(_resultsInbox[chainIds[i]], keccak256(results[i])));
+            _updateResultInboxValue(chainIds[i], txHashes[i], results[i]);
+            _updateRollingHash(chainIds[i], keccak256(results[i]), MailboxType.RESULTS_INBOX);
         }
     }
 
-    // Internal functions
+    // Updates and writes the rolling hash to transient storage
+    function _updateRollingHash(uint256 chainId_, bytes32 newHash, MailboxType mailboxType) internal {
+        // Each chainId has its own unique transient storage slot
+        bytes32 key = keccak256(abi.encodePacked(mailboxType, chainId_));
 
-    // todo use ephemeral storage
-    function _updateTransactionOutbox(uint256 chainId_, bytes32 txHash) internal {
-        _transactionsOutbox[chainId_] = keccak256(abi.encodePacked(_transactionsOutbox[chainId_], txHash));
+        // Get a pointer to the transient storage
+        LibTransient.TBytes32 storage p = LibTransient.tBytes32(key);
+
+        // Read the value from transient storage at pointer location
+        bytes32 rollingHash = LibTransient.getCompat(p);
+
+        // Update rolling hash
+        bytes32 value = keccak256(abi.encodePacked(rollingHash, newHash));
+
+        // Write the value to transient storage at pointer location
+        LibTransient.setCompat(p, value);
     }
 
-    function _updateTransactionsInbox(uint256 chainId_, bytes32 txHash) internal {
-        _transactionsInbox[chainId_] = keccak256(abi.encodePacked(_transactionsInbox[chainId_], txHash));
+    // Writes bytes to transient storage
+    function _updateResultInboxValue(uint256 chainId_, bytes32 txHash, bytes memory result) internal {
+        // Each chainId has its own unique transient storage slot
+        bytes32 key = keccak256(abi.encode(MailboxType.RESULTS_INBOX_VALUES, chainId_, txHash));
+
+        // Get a pointer to the transient storage
+        LibTransient.TBytes storage p = LibTransient.tBytes(key);
+
+        // Write the value to transient storage at pointer location
+        LibTransient.setCompat(p, result);
     }
 
-    function _updateResultsOutbox(uint256 chainId_, bytes32 resultHash) internal {
-        _resultsOutbox[chainId_] = keccak256(abi.encodePacked(_resultsOutbox[chainId_], resultHash));
-    }
+    // Reads bytes from transient storage
+    function _readResultInboxValue(uint256 chainId_, bytes32 txHash) internal view returns (bytes memory) {
+        // Each chainId has its own unique transient storage slot
+        bytes32 key = keccak256(abi.encode(MailboxType.RESULTS_INBOX_VALUES, chainId_, txHash));
 
-    function _updateResultsInbox(uint256 chainId_, bytes32 resultHash) internal {
-        _resultsInbox[chainId_] = keccak256(abi.encodePacked(_resultsInbox[chainId_], resultHash));
-    }
+        // Get a pointer to the transient storage
+        LibTransient.TBytes storage p = LibTransient.tBytes(key);
 
-    function _readResultsInbox(uint256 chainId_, bytes32 txHash) internal view returns (bytes memory) {
-        return _resultsInboxValues[chainId_][txHash];
+        // Read the value from transient storage at pointer location
+        return LibTransient.getCompat(p);
     }
 
     // View functions
+    /// @inheritdoc ICrossChainCaller
     function globalXCallNonce() external view returns (uint256) {
         return _globalXCallNonce;
     }
 
+    /// @inheritdoc ICrossChainCaller
     function chainId() external view returns (uint256) {
         return _chainId;
     }
 
-    function transactionOutbox(uint256 chainId_) external view returns (bytes32) {
-        return _transactionsOutbox[chainId_];
+    /// @inheritdoc ICrossChainCaller
+    function readRollingHash(uint256 chainId_, MailboxType mailboxType) external view returns (bytes32) {
+        // Each chainId has its own unique transient storage slot
+        bytes32 key = keccak256(abi.encodePacked(mailboxType, chainId_));
+
+        // Get a pointer to the transient storage
+        LibTransient.TBytes32 storage p = LibTransient.tBytes32(key);
+
+        // Read the value from transient storage at pointer location
+        return LibTransient.getCompat(p);
     }
 
-    function transactionInbox(uint256 chainId_) external view returns (bytes32) {
-        return _transactionsInbox[chainId_];
-    }
-
-    function resultsOutbox(uint256 chainId_) external view returns (bytes32) {
-        return _resultsOutbox[chainId_];
-    }
-
-    function resultsInbox(uint256 chainId_) external view returns (bytes32) {
-        return _resultsInbox[chainId_];
-    }
-
-    function resultsInboxValues(uint256 chainId_, bytes32 txHash) external view returns (bytes memory) {
-        return _resultsInboxValues[chainId_][txHash];
+    /// @inheritdoc ICrossChainCaller
+    function readResultInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory) {
+        return _readResultInboxValue(chainId_, txHash);
     }
 }

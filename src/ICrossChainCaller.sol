@@ -9,6 +9,14 @@ interface ICrossChainCaller {
         bytes data;
     }
 
+    enum MailboxType {
+        TRANSACTIONS_OUTBOX,
+        TRANSACTIONS_INBOX,
+        RESULTS_OUTBOX,
+        RESULTS_INBOX,
+        RESULTS_INBOX_VALUES
+    }
+
     event CrossChainCall(
         uint256 indexed targetChainId,
         address indexed from,
@@ -41,19 +49,31 @@ interface ICrossChainCaller {
     /// @param txn Encapsulates target address, gas limit, value, and calldata
     function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, CrossCall calldata txn) external;
 
-    function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results) external;
+    /// @notice Fills the results inbox with pre-simulated results for cross-chain calls
+    /// @dev This is called by the sequencer to populate results before xCall is executed
+    /// @param chainIds Array of chain IDs corresponding to each result
+    /// @param txHashes Array of transaction hashes corresponding to each result
+    /// @param results Array of result bytes for each transaction
+    function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results)
+        external;
 
+    /// @notice Returns the current global nonce used for cross-chain calls
+    /// @return The current nonce value
     function globalXCallNonce() external view returns (uint256);
 
+    /// @notice Returns the chain ID this contract was deployed on
+    /// @return The chain ID value
     function chainId() external view returns (uint256);
 
-    function transactionOutbox(uint256 chainId_) external view returns (bytes32);
+    /// @notice Reads the current rolling hash for a given chain ID and mailbox type
+    /// @param chainId_ The chain ID to read the rolling hash for
+    /// @param mailboxType The type of mailbox to read from (transactions or results, inbox or outbox)
+    /// @return The current rolling hash value
+    function readRollingHash(uint256 chainId_, MailboxType mailboxType) external view returns (bytes32);
 
-    function transactionInbox(uint256 chainId_) external view returns (bytes32);
-
-    function resultsOutbox(uint256 chainId_) external view returns (bytes32);
-
-    function resultsInbox(uint256 chainId_) external view returns (bytes32);
-
-    function resultsInboxValues(uint256 chainId_, bytes32 txHash) external view returns (bytes memory);
+    /// @notice Reads a specific result value from the results inbox
+    /// @param chainId_ The chain ID to read the result from
+    /// @param txHash The transaction hash corresponding to the result
+    /// @return The result bytes stored for the given transaction
+    function readResultInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory);
 }

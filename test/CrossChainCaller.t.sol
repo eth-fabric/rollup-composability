@@ -59,11 +59,11 @@ contract CrossChainCallerTester is Test {
 
         // Check the result value written correctly and hashed correctly
         assertEq(
-            chainA.resultsInbox(chainBId),
+            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.RESULTS_INBOX),
             keccak256(
                 abi.encodePacked(
                     bytes32(0), // rolling hash is building on empty bytes32
-                    keccak256(chainA.resultsInboxValues(chainBId, txHash))
+                    keccak256(chainA.readResultInboxValue(chainBId, txHash))
                 )
             )
         );
@@ -71,15 +71,43 @@ contract CrossChainCallerTester is Test {
         // MAILBOX EQUIVALENCE CHECKS
 
         // ChainB executed xCall transactions from ChainA in order
-        assertEq(chainA.transactionOutbox(chainBId), chainB.transactionInbox(chainAId));
+        assertEq(
+            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.TRANSACTIONS_OUTBOX),
+            chainB.readRollingHash(chainAId, ICrossChainCaller.MailboxType.TRANSACTIONS_INBOX),
+            "A's transactionOutbox should be equal to B's transactionInbox"
+        );
 
         // ChainA received results from ChainB in order
-        assertEq(chainA.resultsInbox(chainBId), chainB.resultsOutbox(chainAId));
+        assertEq(
+            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.RESULTS_OUTBOX),
+            chainB.readRollingHash(chainAId, ICrossChainCaller.MailboxType.RESULTS_INBOX),
+            "A's resultsOutbox should be equal to B's resultsInbox"
+        );
 
         // ChainB received results from ChainA in order
-        assertEq(chainA.resultsOutbox(chainBId), chainB.resultsInbox(chainAId));
+        assertEq(
+            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.RESULTS_INBOX),
+            chainB.readRollingHash(chainAId, ICrossChainCaller.MailboxType.RESULTS_OUTBOX),
+            "A's resultsInbox should be equal to B's resultsOutbox"
+        );
 
         // ChainA executed xCall transactions from ChainB in order
-        assertEq(chainA.transactionInbox(chainBId), chainB.transactionOutbox(chainAId));
+        assertEq(
+            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.TRANSACTIONS_INBOX),
+            chainB.readRollingHash(chainAId, ICrossChainCaller.MailboxType.TRANSACTIONS_OUTBOX),
+            "A's transactionInbox should be equal to B's transactionOutbox"
+        );
+
+        // // ChainB executed xCall transactions from ChainA in order
+        // assertEq(chainA.transactionOutbox(chainBId), chainB.transactionInbox(chainAId));
+
+        // // ChainA received results from ChainB in order
+        // assertEq(chainA.resultsInbox(chainBId), chainB.resultsOutbox(chainAId));
+
+        // // ChainB received results from ChainA in order
+        // assertEq(chainA.resultsOutbox(chainBId), chainB.resultsInbox(chainAId));
+
+        // // ChainA executed xCall transactions from ChainB in order
+        // assertEq(chainA.transactionInbox(chainBId), chainB.transactionOutbox(chainAId));
     }
 }
