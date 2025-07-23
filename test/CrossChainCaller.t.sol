@@ -11,16 +11,33 @@ contract Foo {
     }
 }
 
+contract CrossChainCallerImpl is CrossChainCaller {
+    constructor(uint256 chainId) CrossChainCaller(chainId) {}
+
+    function xCall(uint256 targetChainId, address from, ICrossChainCaller.CrossCall calldata txn)
+        external
+        returns (bytes memory)
+    {
+        return _xCall(targetChainId, from, txn);
+    }
+
+    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, ICrossChainCaller.CrossCall calldata txn)
+        external
+    {
+        _xCallHandler(sourceChainId, from, nonce, txn);
+    }
+}
+
 contract CrossChainCallerTester is Test {
-    CrossChainCaller public chainA;
-    CrossChainCaller public chainB;
+    CrossChainCallerImpl public chainA;
+    CrossChainCallerImpl public chainB;
     Foo public foo;
     uint256 public chainAId = 1;
     uint256 public chainBId = 2;
 
     function setUp() public {
-        chainA = new CrossChainCaller(chainAId);
-        chainB = new CrossChainCaller(chainBId);
+        chainA = new CrossChainCallerImpl(chainAId);
+        chainB = new CrossChainCallerImpl(chainBId);
         foo = new Foo();
     }
 
@@ -97,17 +114,5 @@ contract CrossChainCallerTester is Test {
             chainB.readRollingHash(chainAId, ICrossChainCaller.MailboxType.TRANSACTIONS_OUTBOX),
             "A's transactionInbox should be equal to B's transactionOutbox"
         );
-
-        // // ChainB executed xCall transactions from ChainA in order
-        // assertEq(chainA.transactionOutbox(chainBId), chainB.transactionInbox(chainAId));
-
-        // // ChainA received results from ChainB in order
-        // assertEq(chainA.resultsInbox(chainBId), chainB.resultsOutbox(chainAId));
-
-        // // ChainB received results from ChainA in order
-        // assertEq(chainA.resultsOutbox(chainBId), chainB.resultsInbox(chainAId));
-
-        // // ChainA executed xCall transactions from ChainB in order
-        // assertEq(chainA.transactionInbox(chainBId), chainB.transactionOutbox(chainAId));
     }
 }
