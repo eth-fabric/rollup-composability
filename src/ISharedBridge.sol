@@ -10,5 +10,13 @@ interface ISharedBridge {
         external
         returns (bytes memory);
 
+    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, ICrossChainCaller.CrossCall memory txn)
+        external;
+
+    function handleWithdrawal(uint256 sourceChainId, address to, uint256 amount) external;
+
+    event WithdrawalProcessed(address indexed to, uint256 amount);
+
     error UnsupportedChain();
+    error UnsupportedToken();
 }
