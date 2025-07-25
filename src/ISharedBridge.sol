@@ -17,6 +17,6 @@ interface ISharedBridge {
 
     event WithdrawalProcessed(address indexed to, uint256 amount);
 
-    error UnsupportedChain();
     error UnsupportedToken();
+    error InvalidSender();
 }

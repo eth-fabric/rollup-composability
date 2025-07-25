@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {CrossChainCaller} from "../src/CrossChainCaller.sol";
 import {ICrossChainCaller} from "../src/ICrossChainCaller.sol";
 import {SharedBridge} from "../src/SharedBridge.sol";
 import {ISharedBridge} from "../src/ISharedBridge.sol";
@@ -27,7 +26,7 @@ contract DepositTester is Test {
 
         // Verify reverts on unsupported chain
         vm.prank(from);
-        vm.expectRevert(abi.encodeWithSelector(ISharedBridge.UnsupportedChain.selector));
+        vm.expectRevert(abi.encodeWithSelector(ICrossChainCaller.UnsupportedChain.selector));
         chainA.deposit{value: 1 ether}(chainAId, from);
 
         // Verify deposit on supported chain
@@ -47,10 +46,12 @@ contract DepositTester is Test {
                 data: abi.encodeCall(IBridgeL2.mintETH, (from))
             })
         );
+        // Verify mailbox states
+        ICrossChainCaller.MailboxCommitments memory mailboxCommitments = chainA.readMailboxes(chainBId);
 
         // Verify transactionsOutbox correctly written
         assertEq(
-            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.TRANSACTIONS_OUTBOX),
+            mailboxCommitments.transactionsOutbox,
             keccak256(abi.encodePacked(bytes32(0), expectedHash)),
             "transactionOutbox incorrect"
         );
@@ -100,8 +101,9 @@ contract WithdrawalTester is Test {
         assertEq(address(chainA).balance, 0 ether);
 
         // ---- Verify mailbox states ----
+        ICrossChainCaller.MailboxCommitments memory mailboxCommitments = chainA.readMailboxes(chainBId);
 
-        // Reconstruct the expected transaction hash
+        // Verify transactionsOutbox correctly written from the deposit() call
         bytes32 expectedHash = chainA.getTransactionHash(
             chainAId,
             chainBId,
@@ -114,21 +116,27 @@ contract WithdrawalTester is Test {
                 data: abi.encodeCall(IBridgeL2.mintETH, (from))
             })
         );
-
-        // Verify transactionsOutbox correctly written
         assertEq(
-            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.TRANSACTIONS_OUTBOX),
+            mailboxCommitments.transactionsOutbox,
             keccak256(abi.encodePacked(bytes32(0), expectedHash)),
             "transactionOutbox incorrect"
         );
 
+        // Reconstruct the expected inbound transaction hash from the handleWithdrawal() call
         expectedHash = chainA.getTransactionHash(chainBId, chainAId, chainA.L2_BRIDGE_ADDRESS(), 0, txn);
 
         // Verify transactionsInbox correctly written
         assertEq(
-            chainA.readRollingHash(chainBId, ICrossChainCaller.MailboxType.TRANSACTIONS_INBOX),
+            mailboxCommitments.transactionsInbox,
             keccak256(abi.encodePacked(bytes32(0), expectedHash)),
             "transactionInbox incorrect"
+        );
+
+        // Results outbox should be populated with hash of empty return value from the handleWithdrawal() call
+        assertEq(
+            mailboxCommitments.resultsOutbox,
+            keccak256(abi.encodePacked(bytes32(0), keccak256(""))),
+            "resultsOutbox incorrect"
         );
     }
 }

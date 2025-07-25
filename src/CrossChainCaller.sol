@@ -39,13 +39,13 @@ contract CrossChainCaller is ICrossChainCaller {
     }
 
     /// @inheritdoc ICrossChainCaller
-    function readMailboxes(uint256 chainId_) external view returns (bytes32, bytes32, bytes32, bytes32) {
-        return (
-            _readRollingHash(chainId_, MailboxType.TRANSACTIONS_OUTBOX),
-            _readRollingHash(chainId_, MailboxType.TRANSACTIONS_INBOX),
-            _readRollingHash(chainId_, MailboxType.RESULTS_OUTBOX),
-            _readRollingHash(chainId_, MailboxType.RESULTS_INBOX)
-        );
+    function readMailboxes(uint256 chainId_) external view returns (MailboxCommitments memory) {
+        return MailboxCommitments({
+            transactionsOutbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_OUTBOX),
+            transactionsInbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_INBOX),
+            resultsOutbox: _readRollingHash(chainId_, MailboxType.RESULTS_OUTBOX),
+            resultsInbox: _readRollingHash(chainId_, MailboxType.RESULTS_INBOX)
+        });
     }
 
     /// @inheritdoc ICrossChainCaller

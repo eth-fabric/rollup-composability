@@ -13,6 +13,7 @@ contract BridgeL2 is CrossChainCaller, IBridgeL2 {
     address public constant ETH_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     address public L1_BRIDGE;
+    address public SEQUENCER;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
@@ -20,8 +21,34 @@ contract BridgeL2 is CrossChainCaller, IBridgeL2 {
         _;
     }
 
-    constructor(address _l1Bridge, uint256 chainId_) CrossChainCaller(chainId_) {
+    modifier onlySequencer() {
+        require(msg.sender == SEQUENCER, "BridgeL2: caller is not the sequencer");
+        _;
+    }
+
+    constructor(address _l1Bridge, uint256 chainId_, address sequencer) CrossChainCaller(chainId_) {
         L1_BRIDGE = _l1Bridge;
+        SEQUENCER = sequencer;
+    }
+
+    function xCall(uint256 chainId, address from, CrossCall memory txn) external onlySequencer returns (bytes memory) {
+        if (!_chainSupported(chainId)) revert UnsupportedChain();
+
+        return _xCall(chainId, from, txn);
+    }
+
+    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, ICrossChainCaller.CrossCall memory txn)
+        external
+        onlySelf
+    {
+        if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
+        _xCallHandler(sourceChainId, from, nonce, txn);
+    }
+
+    function mintETH(address to) external payable onlySelf {
+        (bool success,) = to.call{value: msg.value}("");
+        require(success, "BridgeL2: failed to mint ETH");
+        emit DepositProcessed(to, msg.value);
     }
 
     function withdraw(uint256 targetChainId, address _receiver) external payable {
@@ -43,17 +70,7 @@ contract BridgeL2 is CrossChainCaller, IBridgeL2 {
         _xCall(targetChainId, msg.sender, crossCall);
     }
 
-    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, ICrossChainCaller.CrossCall memory txn)
-        external
-        onlySelf
-    {
-        // todo check if supported source chain
-        _xCallHandler(sourceChainId, from, nonce, txn);
-    }
-
-    function mintETH(address to) external payable onlySelf {
-        (bool success,) = to.call{value: msg.value}("");
-        require(success, "BridgeL2: failed to mint ETH");
-        emit DepositProcessed(to, msg.value);
+    function editSupportedChain(uint256 chainId, bool supported) external onlySequencer {
+        _editSupportedChain(chainId, supported);
     }
 }

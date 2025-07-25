@@ -17,6 +17,7 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
 
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
+    // todo need per supported chain
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
 
     /// @notice Token address used to represent ETH
@@ -45,6 +46,9 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
 
     function xCall(uint256 chainId, address from, CrossCall memory txn) external onlySequencer returns (bytes memory) {
         if (!_chainSupported(chainId)) revert UnsupportedChain();
+
+        // Only deposit() can use the L2 bridge address
+        if (from == L2_BRIDGE_ADDRESS) revert InvalidSender();
         return _xCall(chainId, from, txn);
     }
 
