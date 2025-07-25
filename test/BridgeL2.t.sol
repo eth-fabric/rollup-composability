@@ -81,15 +81,15 @@ contract WithdrawalTester is Test {
     }
 
     function test_withdrawal() public {
-        address from = makeAddr("alice");
-        vm.deal(from, 100 ether);
+        address alice = makeAddr("alice");
+        vm.deal(alice, 100 ether);
 
         // Call withdraw() on the rollup
-        vm.prank(from);
-        rollup.withdraw{value: 1 ether}(l1Id, from);
+        vm.prank(alice);
+        rollup.withdraw{value: 1 ether}(l1Id, alice);
 
         // Verify withdrawal worked
-        assertEq(from.balance, 99 ether);
+        assertEq(alice.balance, 99 ether);
 
         // ---- Verify mailbox states ----
         ICrossChainCaller.MailboxCommitments memory mailboxCommitments = rollup.readMailboxes(l1Id);
@@ -99,14 +99,14 @@ contract WithdrawalTester is Test {
             to: rollup.L1_BRIDGE(),
             gasLimit: 21000 * 5,
             value: 0,
-            data: abi.encodeCall(ISharedBridge.handleWithdrawal, (rollupId, from, 1 ether))
+            data: abi.encodeCall(ISharedBridge.handleWithdrawal, (rollupId, alice, 1 ether))
         });
 
         // Reconstruct the expected outbound transaction hash from the withdraw() call
         bytes32 expectedHash = rollup.getTransactionHash(
             rollupId, // src
             l1Id, // dst
-            from, // from
+            address(rollup), // xCall originates form rollup
             0,
             crossCall
         );

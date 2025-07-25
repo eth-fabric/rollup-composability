@@ -18,6 +18,9 @@ contract DepositTester is Test {
 
         vm.prank(sequencer);
         chainA.editSupportedChain(chainBId, true);
+
+        vm.prank(sequencer);
+        chainA.setL2BridgeAddress(chainBId, makeAddr("chainB"));
     }
 
     function test_deposit() public {
@@ -37,10 +40,10 @@ contract DepositTester is Test {
         bytes32 expectedHash = chainA.getTransactionHash(
             chainAId,
             chainBId,
-            chainA.L2_BRIDGE_ADDRESS(),
+            chainA.l2BridgeAddresses(chainBId),
             0,
             ICrossChainCaller.CrossCall({
-                to: chainA.L2_BRIDGE_ADDRESS(),
+                to: chainA.l2BridgeAddresses(chainBId),
                 value: 1 ether,
                 gasLimit: 21000 * 5,
                 data: abi.encodeCall(IBridgeL2.mintETH, (from))
@@ -69,6 +72,9 @@ contract WithdrawalTester is Test {
 
         vm.prank(sequencer);
         chainA.editSupportedChain(chainBId, true);
+
+        vm.prank(sequencer);
+        chainA.setL2BridgeAddress(chainBId, makeAddr("chainB"));
     }
 
     function test_withdrawal() public {
@@ -93,7 +99,7 @@ contract WithdrawalTester is Test {
 
         // Execute withdrawal transaction
         vm.startPrank(sequencer);
-        chainA.xCallHandler(chainBId, chainA.L2_BRIDGE_ADDRESS(), 0, txn);
+        chainA.xCallHandler(chainBId, chainA.l2BridgeAddresses(chainBId), 0, txn);
         vm.stopPrank();
 
         // Verify withdrawal worked
@@ -107,10 +113,10 @@ contract WithdrawalTester is Test {
         bytes32 expectedHash = chainA.getTransactionHash(
             chainAId,
             chainBId,
-            chainA.L2_BRIDGE_ADDRESS(),
+            chainA.l2BridgeAddresses(chainBId),
             0,
             ICrossChainCaller.CrossCall({
-                to: chainA.L2_BRIDGE_ADDRESS(),
+                to: chainA.l2BridgeAddresses(chainBId),
                 value: 1 ether,
                 gasLimit: 21000 * 5,
                 data: abi.encodeCall(IBridgeL2.mintETH, (from))
@@ -123,7 +129,7 @@ contract WithdrawalTester is Test {
         );
 
         // Reconstruct the expected inbound transaction hash from the handleWithdrawal() call
-        expectedHash = chainA.getTransactionHash(chainBId, chainAId, chainA.L2_BRIDGE_ADDRESS(), 0, txn);
+        expectedHash = chainA.getTransactionHash(chainBId, chainAId, chainA.l2BridgeAddresses(chainBId), 0, txn);
 
         // Verify transactionsInbox correctly written
         assertEq(

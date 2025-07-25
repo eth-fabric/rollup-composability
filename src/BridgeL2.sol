@@ -67,7 +67,7 @@ contract BridgeL2 is CrossChainCaller, IBridgeL2 {
         });
 
         // Initiate cross-chain withdrawal at the target chain
-        _xCall(targetChainId, msg.sender, crossCall);
+        _xCall(targetChainId, address(this), crossCall);
     }
 
     function editSupportedChain(uint256 chainId, bool supported) external onlySequencer {

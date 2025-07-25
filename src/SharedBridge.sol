@@ -15,10 +15,8 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
     /// @dev The token can take the value {ETH_TOKEN} to represent ETH
     mapping(uint256 chainId => mapping(address l1User => mapping(address token => uint256 amount))) public deposits;
 
-    /// @notice Address of the bridge on the L2
-    /// @dev It's used to validate withdrawals
-    // todo need per supported chain
-    address public constant L2_BRIDGE_ADDRESS = address(0xffff);
+    /// @notice Address of the bridge on the specified L2
+    mapping(uint256 chainId => address l2BridgeAddress) public l2BridgeAddresses;
 
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
@@ -48,7 +46,7 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
         if (!_chainSupported(chainId)) revert UnsupportedChain();
 
         // Only deposit() can use the L2 bridge address
-        if (from == L2_BRIDGE_ADDRESS) revert InvalidSender();
+        if (from == l2BridgeAddresses[chainId]) revert InvalidSender();
         return _xCall(chainId, from, txn);
     }
 
@@ -76,6 +74,10 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
         _editSupportedChain(chainId, supported);
     }
 
+    function setL2BridgeAddress(uint256 chainId, address l2BridgeAddress) external onlySequencer {
+        l2BridgeAddresses[chainId] = l2BridgeAddress;
+    }
+
     /// Burns at least {amount} gas
     function _burnGas(uint256 amount) private view {
         uint256 startingGas = gasleft();
@@ -86,12 +88,12 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
         deposits[chainId][ETH_TOKEN][ETH_TOKEN] += msg.value;
         bytes memory callData = abi.encodeCall(IBridgeL2.mintETH, (l2Recipient));
         CrossCall memory crossCall =
-            CrossCall({to: L2_BRIDGE_ADDRESS, gasLimit: 21000 * 5, value: msg.value, data: callData});
+            CrossCall({to: l2BridgeAddresses[chainId], gasLimit: 21000 * 5, value: msg.value, data: callData});
 
         _burnGas(crossCall.gasLimit);
 
         // The from address must be the L2 bridge address to mint ETH on L2
-        _xCall(chainId, L2_BRIDGE_ADDRESS, crossCall);
+        _xCall(chainId, l2BridgeAddresses[chainId], crossCall);
     }
 
     receive() external payable {
