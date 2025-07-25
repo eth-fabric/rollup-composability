@@ -8,6 +8,8 @@ contract CrossChainCaller is ICrossChainCaller {
     uint256 internal _globalXCallNonce;
     uint256 internal _chainId;
 
+    mapping(uint256 chainId => bool supported) internal _supportedChains;
+
     constructor(uint256 chainId_) {
         _chainId = chainId_;
     }
@@ -28,19 +30,22 @@ contract CrossChainCaller is ICrossChainCaller {
 
     /// @inheritdoc ICrossChainCaller
     function readRollingHash(uint256 chainId_, MailboxType mailboxType) external view returns (bytes32) {
-        // Each chainId has its own unique transient storage slot
-        bytes32 key = keccak256(abi.encodePacked(mailboxType, chainId_));
-
-        // Get a pointer to the transient storage
-        LibTransient.TBytes32 storage p = LibTransient.tBytes32(key);
-
-        // Read the value from transient storage at pointer location
-        return LibTransient.getCompat(p);
+        return _readRollingHash(chainId_, mailboxType);
     }
 
     /// @inheritdoc ICrossChainCaller
     function readResultInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory) {
         return _readResultInboxValue(chainId_, txHash);
+    }
+
+    /// @inheritdoc ICrossChainCaller
+    function readMailboxes(uint256 chainId_) external view returns (bytes32, bytes32, bytes32, bytes32) {
+        return (
+            _readRollingHash(chainId_, MailboxType.TRANSACTIONS_OUTBOX),
+            _readRollingHash(chainId_, MailboxType.TRANSACTIONS_INBOX),
+            _readRollingHash(chainId_, MailboxType.RESULTS_OUTBOX),
+            _readRollingHash(chainId_, MailboxType.RESULTS_INBOX)
+        );
     }
 
     /// @inheritdoc ICrossChainCaller
@@ -62,6 +67,11 @@ contract CrossChainCaller is ICrossChainCaller {
     /// @inheritdoc ICrossChainCaller
     function chainId() external view returns (uint256) {
         return _chainId;
+    }
+
+    /// @inheritdoc ICrossChainCaller
+    function chainSupported(uint256 chainId_) external view returns (bool) {
+        return _chainSupported(chainId_);
     }
 
     // Internal functions
@@ -116,6 +126,17 @@ contract CrossChainCaller is ICrossChainCaller {
 
         // Emit for sequencer to populate destination resultsInboxValues
         emit CrossChainCallExecuted(txHash, result);
+    }
+
+    function _readRollingHash(uint256 chainId_, MailboxType mailboxType) internal view returns (bytes32) {
+        // Each chainId has its own unique transient storage slot
+        bytes32 key = keccak256(abi.encodePacked(mailboxType, chainId_));
+
+        // Get a pointer to the transient storage
+        LibTransient.TBytes32 storage p = LibTransient.tBytes32(key);
+
+        // Read the value from transient storage at pointer location
+        return LibTransient.getCompat(p);
     }
 
     function _getTransactionHash(
@@ -180,5 +201,13 @@ contract CrossChainCaller is ICrossChainCaller {
 
         // Read the value from transient storage at pointer location
         return LibTransient.getCompat(p);
+    }
+
+    function _chainSupported(uint256 chainId_) internal view returns (bool) {
+        return _supportedChains[chainId_];
+    }
+
+    function _editSupportedChain(uint256 chainId_, bool supported) internal {
+        _supportedChains[chainId_] = supported;
     }
 }

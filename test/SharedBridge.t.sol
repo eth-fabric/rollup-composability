@@ -74,7 +74,7 @@ contract WithdrawalTester is Test {
         address from = makeAddr("alice");
         vm.deal(from, 100 ether);
 
-        // Deposit
+        // Deposit 1 ether to SharedBridge
         vm.prank(from);
         chainA.deposit{value: 1 ether}(chainBId, from);
 
@@ -82,7 +82,7 @@ contract WithdrawalTester is Test {
         assertEq(from.balance, 99 ether);
         assertEq(address(chainA).balance, 1 ether);
 
-        // Create a withdrawal transaction
+        // Create a withdrawal transaction for 1 ether
         ICrossChainCaller.CrossCall memory txn = ICrossChainCaller.CrossCall({
             to: address(chainA),
             gasLimit: 21000 * 5,
@@ -91,11 +91,13 @@ contract WithdrawalTester is Test {
         });
 
         // Execute withdrawal transaction
-        vm.prank(sequencer);
+        vm.startPrank(sequencer);
         chainA.xCallHandler(chainBId, chainA.L2_BRIDGE_ADDRESS(), 0, txn);
+        vm.stopPrank();
 
         // Verify withdrawal worked
         assertEq(from.balance, 100 ether);
+        assertEq(address(chainA).balance, 0 ether);
 
         // ---- Verify mailbox states ----
 

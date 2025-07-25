@@ -22,8 +22,6 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    mapping(uint256 chainId => bool supported) public supportedChains;
-
     modifier onlySequencer() {
         require(msg.sender == SEQUENCER, "SharedBridge: caller is not the Sequencer");
         _;
@@ -35,30 +33,43 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
     }
 
     constructor(address sequencer, uint256 chainId) CrossChainCaller(chainId) {
-        require(sequencer != address(0), "BasicBridge: sequencer is the zero address");
+        require(sequencer != address(0), "SharedBridge: sequencer is the zero address");
         SEQUENCER = sequencer;
-    }
-
-    function editSupportedChain(uint256 chainId, bool supported) external onlySequencer {
-        supportedChains[chainId] = supported;
     }
 
     /// @inheritdoc ISharedBridge
     function deposit(uint256 chainId, address l2Recipient) external payable {
-        if (!supportedChains[chainId]) revert UnsupportedChain();
+        if (!_chainSupported(chainId)) revert UnsupportedChain();
         _deposit(chainId, l2Recipient);
     }
 
     function xCall(uint256 chainId, address from, CrossCall memory txn) external onlySequencer returns (bytes memory) {
-        if (!supportedChains[chainId]) revert UnsupportedChain();
+        if (!_chainSupported(chainId)) revert UnsupportedChain();
         return _xCall(chainId, from, txn);
     }
 
-    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, CrossCall memory txn) external 
-    // onlySequencer
+    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, CrossCall memory txn)
+        external
+        onlySequencer
     {
-        if (!supportedChains[sourceChainId]) revert UnsupportedChain();
+        if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
         _xCallHandler(sourceChainId, from, nonce, txn);
+    }
+
+    // for now, only ETH is supported
+    function handleWithdrawal(uint256 sourceChainId, address to, uint256 amount) external onlySelf {
+        if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
+
+        deposits[sourceChainId][ETH_TOKEN][ETH_TOKEN] -= amount;
+
+        (bool success,) = payable(to).call{value: amount}("");
+        require(success, "SharedBridge: failed to handle withdrawal");
+
+        emit WithdrawalProcessed(to, amount);
+    }
+
+    function editSupportedChain(uint256 chainId, bool supported) external onlySequencer {
+        _editSupportedChain(chainId, supported);
     }
 
     /// Burns at least {amount} gas
@@ -77,18 +88,6 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
 
         // The from address must be the L2 bridge address to mint ETH on L2
         _xCall(chainId, L2_BRIDGE_ADDRESS, crossCall);
-    }
-
-    // for now, only ETH is supported
-    function handleWithdrawal(uint256 sourceChainId, address to, uint256 amount) external onlySelf {
-        if (!supportedChains[sourceChainId]) revert UnsupportedChain();
-
-        deposits[sourceChainId][ETH_TOKEN][ETH_TOKEN] -= amount;
-
-        (bool success,) = payable(to).call{value: amount}("");
-        require(success, "SharedBridge: failed to handle withdrawal");
-
-        emit WithdrawalProcessed(to, amount);
     }
 
     receive() external payable {

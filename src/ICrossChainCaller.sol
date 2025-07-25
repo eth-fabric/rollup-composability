@@ -59,6 +59,16 @@ interface ICrossChainCaller {
     /// @return The chain ID value
     function chainId() external view returns (uint256);
 
+    /// @notice Returns whether a chain is supported
+    /// @param chainId_ The chain ID to check
+    /// @return Whether the chain is supported
+    function chainSupported(uint256 chainId_) external view returns (bool);
+
+    /// @notice Reads the current rolling hashes for a given chain ID
+    /// @param chainId_ The chain ID to read the rolling hash for
+    /// @return The current rolling hash values for the four mailboxes (transactionsOutbox, transactionsInbox, resultsOutbox, resultsInbox)
+    function readMailboxes(uint256 chainId_) external view returns (bytes32, bytes32, bytes32, bytes32);
+
     /// @notice Reads the current rolling hash for a given chain ID and mailbox type
     /// @param chainId_ The chain ID to read the rolling hash for
     /// @param mailboxType The type of mailbox to read from (transactions or results, inbox or outbox)
