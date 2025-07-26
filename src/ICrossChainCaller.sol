@@ -54,9 +54,9 @@ interface ICrossChainCaller {
 
     /// @notice Fills the results inbox with pre-simulated results for cross-chain calls
     /// @dev This is called by the sequencer to populate results before xCall is executed
-    /// @param chainIds Array of chain IDs corresponding to each result
-    /// @param txHashes Array of transaction hashes corresponding to each result
-    /// @param results Array of result bytes for each transaction
+    /// @param chainIds Chain IDs corresponding to each result
+    /// @param txHashes Hashes of the transactions that generated the results
+    /// @param results Result bytes for each executed transaction
     function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results)
         external;
 

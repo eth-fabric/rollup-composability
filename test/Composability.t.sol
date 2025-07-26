@@ -16,12 +16,37 @@ contract SharedBridgeMock is SharedBridge {
     }
 }
 
-contract DepositTester is Test {
+contract TargetContract {
+    uint256 state;
+
+    function updateState() external returns (uint256) {
+        state++;
+        return state;
+    }
+
+    function getState() external view returns (uint256) {
+        return state;
+    }
+}
+
+contract ComposabilityTester is Test {
     SharedBridgeMock public mainnet;
     BridgeL2 public rollup;
     uint256 public mainnetId = 1;
     uint256 public rollupId = 2;
     address public sequencer = makeAddr("sequencer");
+
+    /// @notice Struct to hold cross-chain call parameters
+    struct CrossCallParams {
+        address target;
+        bytes data;
+        uint256 value;
+        uint256 gasLimit;
+        uint256 sourceChainId;
+        uint256 targetChainId;
+        address from;
+        uint256 nonce;
+    }
 
     function setUp() public {
         mainnet = new SharedBridgeMock(sequencer, mainnetId);
@@ -38,6 +63,25 @@ contract DepositTester is Test {
 
         // Give the rollup some ETH to mint
         vm.deal(address(rollup), 100 ether);
+    }
+
+    /// @notice Helper function to create a CrossCall and calculate its transaction hash
+    /// @param params The CrossCallParams struct containing all call parameters
+    /// @return txn The CrossCall struct
+    /// @return txHash The calculated transaction hash
+    function createCrossCallAndHash(CrossCallParams memory params)
+        internal
+        view
+        returns (ICrossChainCaller.CrossCall memory txn, bytes32 txHash)
+    {
+        txn = ICrossChainCaller.CrossCall({
+            to: params.target,
+            gasLimit: params.gasLimit,
+            value: params.value,
+            data: params.data
+        });
+
+        txHash = mainnet.getTransactionHash(params.sourceChainId, params.targetChainId, params.from, params.nonce, txn);
     }
 
     function test_l1ToL2_deposit() public {
@@ -60,14 +104,19 @@ contract DepositTester is Test {
         vm.prank(alice);
         mainnet.deposit{value: 1 ether}(rollupId, bob);
 
-        // Reconstruct the outbound L1->L2 transaction
-        // (Sequencer can use the CrossChainCall event data)
-        ICrossChainCaller.CrossCall memory txn = ICrossChainCaller.CrossCall({
-            to: mainnet.l2BridgeAddresses(rollupId),
-            gasLimit: 21000 * 5,
-            value: 1 ether,
-            data: abi.encodeCall(IBridgeL2.mintETH, (bob))
-        });
+        // Reconstruct the outbound L1->L2 transaction using helper
+        (ICrossChainCaller.CrossCall memory txn,) = createCrossCallAndHash(
+            CrossCallParams({
+                target: mainnet.l2BridgeAddresses(rollupId),
+                data: abi.encodeCall(IBridgeL2.mintETH, (bob)),
+                value: 1 ether,
+                gasLimit: 21000 * 5,
+                sourceChainId: mainnetId,
+                targetChainId: rollupId,
+                from: alice,
+                nonce: nonce
+            })
+        );
 
         // Execute the L2 privileged transaction handler
         // This will call the mintETH() function on the rollup
@@ -129,14 +178,19 @@ contract DepositTester is Test {
         vm.prank(alice);
         rollup.withdraw{value: 1 ether}(mainnetId, bob);
 
-        // Reconstruct the outbound L2->L1 transaction
-        // (Sequencer can use the CrossChainCall event data)
-        ICrossChainCaller.CrossCall memory txn = ICrossChainCaller.CrossCall({
-            to: address(mainnet),
-            gasLimit: 21000 * 5,
-            value: 0,
-            data: abi.encodeCall(ISharedBridge.handleWithdrawal, (rollupId, bob, 1 ether))
-        });
+        // Reconstruct the outbound L2->L1 transaction using helper
+        (ICrossChainCaller.CrossCall memory txn,) = createCrossCallAndHash(
+            CrossCallParams({
+                target: address(mainnet),
+                data: abi.encodeCall(ISharedBridge.handleWithdrawal, (rollupId, bob, 1 ether)),
+                value: 0,
+                gasLimit: 21000 * 5,
+                sourceChainId: rollupId,
+                targetChainId: mainnetId,
+                from: address(rollup),
+                nonce: nonce
+            })
+        );
 
         // Execute the L2 privileged transaction handler
         // This will call the handleWithdrawal() function on the mainnet
@@ -147,6 +201,142 @@ contract DepositTester is Test {
         // Verify balances are correct
         assertEq(alice.balance, 99 ether);
         assertEq(bob.balance, 1 ether);
+
+        // Verify mailbox states
+        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
+        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
+
+        assertEq(
+            mainnetMailboxCommitments.transactionsOutbox,
+            rollupMailboxCommitments.transactionsInbox,
+            "mainnet.transactionsOutbox != rollup.transactionsInbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.transactionsInbox,
+            rollupMailboxCommitments.transactionsOutbox,
+            "mainnet.transactionsInbox != rollup.transactionsOutbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.resultsInbox,
+            rollupMailboxCommitments.resultsOutbox,
+            "mainnet.resultsInbox != rollup.resultsOutbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.resultsOutbox,
+            rollupMailboxCommitments.resultsInbox,
+            "mainnet.resultsOutbox != rollup.resultsInbox"
+        );
+    }
+
+    function test_l1ToL2_call() public {
+        TargetContract target = new TargetContract(); // assume lives on L2
+        address alice = makeAddr("alice");
+        uint256 nonce = 0;
+        vm.deal(alice, 100 ether);
+        uint256[] memory chainIds = new uint256[](1);
+        bytes[] memory results = new bytes[](1);
+        bytes32[] memory txHashes = new bytes32[](1);
+
+        // Construct the outbound L1->L2 transaction
+        (ICrossChainCaller.CrossCall memory txn, bytes32 txHash) = createCrossCallAndHash(
+            CrossCallParams({
+                target: address(target),
+                data: abi.encodeCall(TargetContract.updateState, ()),
+                value: 0,
+                gasLimit: 21000 * 5,
+                sourceChainId: mainnetId,
+                targetChainId: rollupId,
+                from: alice,
+                nonce: nonce
+            })
+        );
+
+        // Prepopulate the L1 result inbox with updateState() result for the xCall to read from
+        chainIds[0] = rollupId; // Result is from the rollup
+        results[0] = abi.encode(1); // updateState() would return 1
+        txHashes[0] = txHash; // transaction hash that will be used by xCall
+        mainnet.fillResultsInbox(chainIds, txHashes, results);
+
+        // Execute the xCall from L1
+        vm.startPrank(sequencer);
+        bytes memory result = mainnet.xCall(rollupId, alice, txn);
+        vm.stopPrank();
+
+        // Execute the xCallHandler from L2
+        vm.startPrank(address(rollup));
+        rollup.xCallHandler(mainnetId, alice, nonce, txn);
+        vm.stopPrank();
+
+        // Verify the result
+        assertEq(result, abi.encode(target.getState()), "result != target.getState()");
+
+        // Verify mailbox states
+        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
+        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
+
+        assertEq(
+            mainnetMailboxCommitments.transactionsOutbox,
+            rollupMailboxCommitments.transactionsInbox,
+            "mainnet.transactionsOutbox != rollup.transactionsInbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.transactionsInbox,
+            rollupMailboxCommitments.transactionsOutbox,
+            "mainnet.transactionsInbox != rollup.transactionsOutbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.resultsInbox,
+            rollupMailboxCommitments.resultsOutbox,
+            "mainnet.resultsInbox != rollup.resultsOutbox"
+        );
+        assertEq(
+            mainnetMailboxCommitments.resultsOutbox,
+            rollupMailboxCommitments.resultsInbox,
+            "mainnet.resultsOutbox != rollup.resultsInbox"
+        );
+    }
+
+    function test_l2ToL1_call() public {
+        TargetContract target = new TargetContract(); // assume lives on L1
+        address alice = makeAddr("alice");
+        uint256 nonce = 0;
+        vm.deal(alice, 100 ether);
+        uint256[] memory chainIds = new uint256[](1);
+        bytes[] memory results = new bytes[](1);
+        bytes32[] memory txHashes = new bytes32[](1);
+
+        // Construct the outbound L2->L1 transaction
+        (ICrossChainCaller.CrossCall memory txn, bytes32 txHash) = createCrossCallAndHash(
+            CrossCallParams({
+                target: address(target),
+                data: abi.encodeCall(TargetContract.updateState, ()),
+                value: 0,
+                gasLimit: 21000 * 5,
+                sourceChainId: rollupId,
+                targetChainId: mainnetId,
+                from: alice,
+                nonce: nonce
+            })
+        );
+
+        // Prepopulate the L2 result inbox with updateState() result
+        chainIds[0] = mainnetId; // Result is from mainnet
+        results[0] = abi.encode(1); // updateState() would return 1
+        txHashes[0] = txHash; // transaction hash that will be used by xCall
+        rollup.fillResultsInbox(chainIds, txHashes, results);
+
+        // Execute the xCall from L2
+        vm.startPrank(sequencer);
+        bytes memory result = rollup.xCall(mainnetId, alice, txn);
+        vm.stopPrank();
+
+        // Execute the xCallHandler from L1
+        vm.startPrank(address(sequencer));
+        mainnet.xCallHandler(rollupId, alice, nonce, txn);
+        vm.stopPrank();
+
+        // Verify the result
+        assertEq(result, abi.encode(target.getState()), "result != target.getState()");
 
         // Verify mailbox states
         ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
