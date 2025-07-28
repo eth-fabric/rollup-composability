@@ -38,6 +38,20 @@ interface ICrossChainCaller {
 
     event CrossChainCallExecuted(bytes32 indexed txHash, bytes result);
 
+    /// @notice Fills the results inbox with pre-simulated results for cross-chain calls
+    /// @dev This is called by the sequencer to populate results before xCall is executed
+    /// @param chainIds Chain IDs corresponding to each result
+    /// @param txHashes Hashes of the transactions that generated the results
+    /// @param results Result bytes for each executed transaction
+    function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results)
+        external;
+
+    /// @notice Compares the mailboxes of two chains
+    /// @param chainId The chain ID to compare the mailboxes of
+    /// @param other The other chain's mailboxes to compare to
+    /// @return Whether the mailboxes are equal
+    function mailboxEquals(uint256 chainId, MailboxCommitments memory other) external view returns (bool);
+
     /// @notice Generates a unique transaction hash for a cross-chain call
     /// @param sourceChainId The chain ID where the cross-chain call originated from
     /// @param targetChainId The chain ID where the cross-chain call is handled
@@ -51,14 +65,6 @@ interface ICrossChainCaller {
         uint256 nonce,
         CrossCall memory txn
     ) external pure returns (bytes32);
-
-    /// @notice Fills the results inbox with pre-simulated results for cross-chain calls
-    /// @dev This is called by the sequencer to populate results before xCall is executed
-    /// @param chainIds Chain IDs corresponding to each result
-    /// @param txHashes Hashes of the transactions that generated the results
-    /// @param results Result bytes for each executed transaction
-    function fillResultsInbox(uint256[] calldata chainIds, bytes32[] calldata txHashes, bytes[] calldata results)
-        external;
 
     /// @notice Returns the current global nonce used for cross-chain calls
     /// @return The current nonce value

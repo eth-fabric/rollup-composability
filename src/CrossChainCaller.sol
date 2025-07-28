@@ -29,6 +29,11 @@ contract CrossChainCaller is ICrossChainCaller {
     // View functions
 
     /// @inheritdoc ICrossChainCaller
+    function mailboxEquals(uint256 chainId_, MailboxCommitments memory other) external view returns (bool) {
+        return _mailboxEquals(chainId_, other);
+    }
+
+    /// @inheritdoc ICrossChainCaller
     function readRollingHash(uint256 chainId_, MailboxType mailboxType) external view returns (bytes32) {
         return _readRollingHash(chainId_, mailboxType);
     }
@@ -40,12 +45,7 @@ contract CrossChainCaller is ICrossChainCaller {
 
     /// @inheritdoc ICrossChainCaller
     function readMailboxes(uint256 chainId_) external view returns (MailboxCommitments memory) {
-        return MailboxCommitments({
-            transactionsOutbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_OUTBOX),
-            transactionsInbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_INBOX),
-            resultsOutbox: _readRollingHash(chainId_, MailboxType.RESULTS_OUTBOX),
-            resultsInbox: _readRollingHash(chainId_, MailboxType.RESULTS_INBOX)
-        });
+        return _readMailboxes(chainId_);
     }
 
     /// @inheritdoc ICrossChainCaller
@@ -124,8 +124,25 @@ contract CrossChainCaller is ICrossChainCaller {
         // Update rolling result outbox hash
         _updateRollingHash(sourceChainId, keccak256(result), MailboxType.RESULTS_OUTBOX);
 
-        // Emit for sequencer to populate destination resultsInboxValues
+        // Emit for sequencer to populate source-chain's resultsInboxValues
         emit CrossChainCallExecuted(txHash, result);
+    }
+
+    function _mailboxEquals(uint256 chainId_, MailboxCommitments memory other) internal view returns (bool) {
+        MailboxCommitments memory mailbox = _readMailboxes(chainId_);
+
+        return mailbox.transactionsOutbox == other.transactionsInbox
+            && mailbox.transactionsInbox == other.transactionsOutbox && mailbox.resultsOutbox == other.resultsInbox
+            && mailbox.resultsInbox == other.resultsOutbox;
+    }
+
+    function _readMailboxes(uint256 chainId_) internal view returns (MailboxCommitments memory) {
+        return MailboxCommitments({
+            transactionsOutbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_OUTBOX),
+            transactionsInbox: _readRollingHash(chainId_, MailboxType.TRANSACTIONS_INBOX),
+            resultsOutbox: _readRollingHash(chainId_, MailboxType.RESULTS_OUTBOX),
+            resultsInbox: _readRollingHash(chainId_, MailboxType.RESULTS_INBOX)
+        });
     }
 
     function _readRollingHash(uint256 chainId_, MailboxType mailboxType) internal view returns (bytes32) {

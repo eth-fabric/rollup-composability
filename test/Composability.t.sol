@@ -129,29 +129,7 @@ contract ComposabilityTester is Test {
         assertEq(bob.balance, 1 ether);
 
         // Verify mailbox states
-        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
-        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
-
-        assertEq(
-            mainnetMailboxCommitments.transactionsOutbox,
-            rollupMailboxCommitments.transactionsInbox,
-            "mainnet.transactionsOutbox != rollup.transactionsInbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.transactionsInbox,
-            rollupMailboxCommitments.transactionsOutbox,
-            "mainnet.transactionsInbox != rollup.transactionsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsInbox,
-            rollupMailboxCommitments.resultsOutbox,
-            "mainnet.resultsInbox != rollup.resultsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsOutbox,
-            rollupMailboxCommitments.resultsInbox,
-            "mainnet.resultsOutbox != rollup.resultsInbox"
-        );
+        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
     }
 
     function test_l2ToL1_withdrawal() public {
@@ -203,29 +181,7 @@ contract ComposabilityTester is Test {
         assertEq(bob.balance, 1 ether);
 
         // Verify mailbox states
-        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
-        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
-
-        assertEq(
-            mainnetMailboxCommitments.transactionsOutbox,
-            rollupMailboxCommitments.transactionsInbox,
-            "mainnet.transactionsOutbox != rollup.transactionsInbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.transactionsInbox,
-            rollupMailboxCommitments.transactionsOutbox,
-            "mainnet.transactionsInbox != rollup.transactionsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsInbox,
-            rollupMailboxCommitments.resultsOutbox,
-            "mainnet.resultsInbox != rollup.resultsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsOutbox,
-            rollupMailboxCommitments.resultsInbox,
-            "mainnet.resultsOutbox != rollup.resultsInbox"
-        );
+        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
     }
 
     function test_l1ToL2_call() public {
@@ -271,29 +227,7 @@ contract ComposabilityTester is Test {
         assertEq(result, abi.encode(target.getState()), "result != target.getState()");
 
         // Verify mailbox states
-        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
-        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
-
-        assertEq(
-            mainnetMailboxCommitments.transactionsOutbox,
-            rollupMailboxCommitments.transactionsInbox,
-            "mainnet.transactionsOutbox != rollup.transactionsInbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.transactionsInbox,
-            rollupMailboxCommitments.transactionsOutbox,
-            "mainnet.transactionsInbox != rollup.transactionsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsInbox,
-            rollupMailboxCommitments.resultsOutbox,
-            "mainnet.resultsInbox != rollup.resultsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsOutbox,
-            rollupMailboxCommitments.resultsInbox,
-            "mainnet.resultsOutbox != rollup.resultsInbox"
-        );
+        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
     }
 
     function test_l2ToL1_call() public {
@@ -339,28 +273,6 @@ contract ComposabilityTester is Test {
         assertEq(result, abi.encode(target.getState()), "result != target.getState()");
 
         // Verify mailbox states
-        ICrossChainCaller.MailboxCommitments memory mainnetMailboxCommitments = mainnet.readMailboxes(rollupId);
-        ICrossChainCaller.MailboxCommitments memory rollupMailboxCommitments = rollup.readMailboxes(mainnetId);
-
-        assertEq(
-            mainnetMailboxCommitments.transactionsOutbox,
-            rollupMailboxCommitments.transactionsInbox,
-            "mainnet.transactionsOutbox != rollup.transactionsInbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.transactionsInbox,
-            rollupMailboxCommitments.transactionsOutbox,
-            "mainnet.transactionsInbox != rollup.transactionsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsInbox,
-            rollupMailboxCommitments.resultsOutbox,
-            "mainnet.resultsInbox != rollup.resultsOutbox"
-        );
-        assertEq(
-            mainnetMailboxCommitments.resultsOutbox,
-            rollupMailboxCommitments.resultsInbox,
-            "mainnet.resultsOutbox != rollup.resultsInbox"
-        );
+        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
     }
 }
