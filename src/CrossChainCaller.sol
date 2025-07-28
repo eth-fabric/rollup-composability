@@ -21,7 +21,7 @@ contract CrossChainCaller is ICrossChainCaller {
         require(txHashes.length == results.length, "txHashes and results must have the same length");
         require(chainIds.length == txHashes.length, "chainIds and txHashes must have the same length");
         for (uint256 i = 0; i < txHashes.length; i++) {
-            _updateResultInboxValue(chainIds[i], txHashes[i], results[i]);
+            _updateResultsInboxValue(chainIds[i], txHashes[i], results[i]);
             _updateRollingHash(chainIds[i], keccak256(results[i]), MailboxType.RESULTS_INBOX);
         }
     }
@@ -39,8 +39,8 @@ contract CrossChainCaller is ICrossChainCaller {
     }
 
     /// @inheritdoc ICrossChainCaller
-    function readResultInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory) {
-        return _readResultInboxValue(chainId_, txHash);
+    function readResultsInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory) {
+        return _readResultsInboxValue(chainId_, txHash);
     }
 
     /// @inheritdoc ICrossChainCaller
@@ -100,7 +100,7 @@ contract CrossChainCaller is ICrossChainCaller {
         emit CrossChainCall(targetChainId, from, txn.to, nonce, txn.value, txn.gasLimit, txn.data);
 
         // Read prefilled result from inbox (already simulated by sequencer)
-        return _readResultInboxValue(targetChainId, txHash);
+        return _readResultsInboxValue(targetChainId, txHash);
     }
 
     /// @notice Executes a transaction received via xCall from a source chain.
@@ -197,7 +197,7 @@ contract CrossChainCaller is ICrossChainCaller {
     }
 
     // Writes bytes to transient storage
-    function _updateResultInboxValue(uint256 chainId_, bytes32 txHash, bytes memory result) internal {
+    function _updateResultsInboxValue(uint256 chainId_, bytes32 txHash, bytes memory result) internal {
         // Each chainId has its own unique transient storage slot
         bytes32 key = keccak256(abi.encode(MailboxType.RESULTS_INBOX_VALUES, chainId_, txHash));
 
@@ -209,7 +209,7 @@ contract CrossChainCaller is ICrossChainCaller {
     }
 
     // Reads bytes from transient storage
-    function _readResultInboxValue(uint256 chainId_, bytes32 txHash) internal view returns (bytes memory) {
+    function _readResultsInboxValue(uint256 chainId_, bytes32 txHash) internal view returns (bytes memory) {
         // Each chainId has its own unique transient storage slot
         bytes32 key = keccak256(abi.encode(MailboxType.RESULTS_INBOX_VALUES, chainId_, txHash));
 

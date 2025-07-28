@@ -94,5 +94,5 @@ interface ICrossChainCaller {
     /// @param chainId_ The chain ID to read the result from
     /// @param txHash The transaction hash corresponding to the result
     /// @return The result bytes stored for the given transaction
-    function readResultInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory);
+    function readResultsInboxValue(uint256 chainId_, bytes32 txHash) external view returns (bytes memory);
 }

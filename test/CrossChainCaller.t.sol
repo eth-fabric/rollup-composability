@@ -80,7 +80,7 @@ contract CrossChainCallerTester is Test {
             keccak256(
                 abi.encodePacked(
                     bytes32(0), // rolling hash is building on empty bytes32
-                    keccak256(chainA.readResultInboxValue(chainBId, txHash))
+                    keccak256(chainA.readResultsInboxValue(chainBId, txHash))
                 )
             )
         );
