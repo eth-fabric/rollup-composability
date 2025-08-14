@@ -2,6 +2,15 @@
 pragma solidity =0.8.29;
 
 interface IBridgeL2 {
+    event SequencerUpdated(address indexed oldSequencer, address indexed newSequencer);
+    event L2BridgeUpdated(uint256 indexed chainId, address indexed oldBridge, address indexed newBridge);
+
+    error OnlySequencer();
+    error UnsupportedL2Chain();
+    error OnlyL1Bridge();
+    error InvalidSender();
+    error OnlyOwner();
+
     /// @notice An ETH deposit was successfully processed
     /// @dev Event emitted when an ETH deposit is processed.
     /// @param receiver the address that received the ETH

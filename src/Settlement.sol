@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity ^0.8.13;
 
 import "./ISettlement.sol";
-import {ICrossChainCaller} from "./ICrossChainCaller.sol";
+import {IScopedCallable} from "./IScopedCallable.sol";
 import {ISharedBridge} from "./ISharedBridge.sol";
 import {ITDXVerifier} from "./ITDXVerifier.sol";
 
@@ -17,7 +17,7 @@ contract Settlement is ISettlement {
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
-    ICrossChainCaller internal _sharedBridge;
+    IScopedCallable internal _sharedBridge;
     address internal _sequencer;
     address internal _tdxVerifier;
 
@@ -27,7 +27,7 @@ contract Settlement is ISettlement {
     }
 
     constructor(address sharedBridge_, address sequencer_, address tdxVerifier_) {
-        _sharedBridge = ICrossChainCaller(sharedBridge_);
+        _sharedBridge = IScopedCallable(sharedBridge_);
         _tdxVerifier = tdxVerifier_;
         _sequencer = sequencer_;
     }
@@ -97,15 +97,15 @@ contract Settlement is ISettlement {
         // last block hash
         publicData = bytes.concat(publicData, _lastBlockHash);
 
-        // get shared bridge's mailbox state for each chain
+        // get shared bridge's rolling hashes for each chain
         for (uint256 i = 0; i < chainIds.length; i++) {
-            ICrossChainCaller.MailboxCommitments memory mailboxCommitments = _sharedBridge.readMailboxes(chainIds[i]);
+            IScopedCallable.RollingHashes memory rollingHashes = _sharedBridge.getRollingHashes(chainIds[i]);
             publicData = bytes.concat(
                 publicData,
-                bytes32(mailboxCommitments.transactionsInbox),
-                bytes32(mailboxCommitments.transactionsOutbox),
-                bytes32(mailboxCommitments.resultsInbox),
-                bytes32(mailboxCommitments.resultsOutbox)
+                bytes32(rollingHashes.requestsIn),
+                bytes32(rollingHashes.requestsOut),
+                bytes32(rollingHashes.responsesIn),
+                bytes32(rollingHashes.responsesOut)
             );
         }
         return publicData;

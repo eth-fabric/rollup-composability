@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity ^0.8.13;
 
-import {CrossChainCaller} from "./CrossChainCaller.sol";
-import {ICrossChainCaller} from "./ICrossChainCaller.sol";
+import {ScopedCallable} from "./ScopedCallable.sol";
+import {IScopedCallable} from "./IScopedCallable.sol";
 import {ISharedBridge} from "./ISharedBridge.sol";
 import {IBridgeL2} from "./IBridgeL2.sol";
 
-contract SharedBridge is CrossChainCaller, ISharedBridge {
-    address public SEQUENCER;
+contract SharedBridge is ScopedCallable, ISharedBridge {
+    address public sequencer;
 
     /// @notice How much of each L1 token was deposited to each L2 token.
     /// @dev Stored as chain -> L1 -> L2 -> amount
@@ -22,18 +22,17 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
     address public constant ETH_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     modifier onlySequencer() {
-        require(msg.sender == SEQUENCER, "SharedBridge: caller is not the Sequencer");
+        if (msg.sender != sequencer) revert OnlySequencer();
         _;
     }
 
     modifier onlySelf() {
-        require(msg.sender == address(this), "SharedBridge: caller is not the bridge");
+        if (msg.sender != address(this)) revert InvalidSender();
         _;
     }
 
-    constructor(address sequencer, uint256 chainId) CrossChainCaller(chainId) {
-        require(sequencer != address(0), "SharedBridge: sequencer is the zero address");
-        SEQUENCER = sequencer;
+    constructor(address sequencer_, uint256 chainId) ScopedCallable(chainId) {
+        _setSequencer(sequencer_);
     }
 
     /// @inheritdoc ISharedBridge
@@ -42,20 +41,24 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
         _deposit(chainId, l2Recipient);
     }
 
-    function xCall(uint256 chainId, address from, CrossCall memory txn) external onlySequencer returns (bytes memory) {
+    function scopedCall(uint256 chainId, address from, ScopedRequest memory request)
+        external
+        onlySequencer
+        returns (bytes memory)
+    {
         if (!_chainSupported(chainId)) revert UnsupportedChain();
 
         // Only deposit() can use the L2 bridge address
         if (from == l2BridgeAddresses[chainId]) revert InvalidSender();
-        return _xCall(chainId, from, txn);
+        return _scopedCall(chainId, from, request);
     }
 
-    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, CrossCall memory txn)
+    function handleScopedCall(uint256 sourceChainId, address from, uint256 nonce, ScopedRequest memory request)
         external
         onlySequencer
     {
         if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
-        _xCallHandler(sourceChainId, from, nonce, txn);
+        _handleScopedCall(sourceChainId, from, nonce, request);
     }
 
     // for now, only ETH is supported
@@ -84,16 +87,22 @@ contract SharedBridge is CrossChainCaller, ISharedBridge {
         while (startingGas - gasleft() < amount) {}
     }
 
+    function _setSequencer(address newSequencer) internal {
+        address oldSequencer = sequencer;
+        sequencer = newSequencer;
+        emit SequencerUpdated(oldSequencer, newSequencer);
+    }
+
     function _deposit(uint256 chainId, address l2Recipient) private {
         deposits[chainId][ETH_TOKEN][ETH_TOKEN] += msg.value;
         bytes memory callData = abi.encodeCall(IBridgeL2.mintETH, (l2Recipient));
-        CrossCall memory crossCall =
-            CrossCall({to: l2BridgeAddresses[chainId], gasLimit: 21000 * 5, value: msg.value, data: callData});
+        ScopedRequest memory scopedRequest =
+            ScopedRequest({to: l2BridgeAddresses[chainId], gasLimit: 21000 * 5, value: msg.value, data: callData});
 
-        _burnGas(crossCall.gasLimit);
+        _burnGas(scopedRequest.gasLimit);
 
         // The from address must be the L2 bridge address to mint ETH on L2
-        _xCall(chainId, l2BridgeAddresses[chainId], crossCall);
+        _scopedCall(chainId, l2BridgeAddresses[chainId], scopedRequest);
     }
 
     receive() external payable {

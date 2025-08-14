@@ -1,12 +1,13 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import {Test, console} from "forge-std/Test.sol";
-import {ICrossChainCaller} from "../src/ICrossChainCaller.sol";
+import {Test} from "forge-std/Test.sol";
+import {IScopedCallable} from "../src/IScopedCallable.sol";
+import {ScopedCallable} from "../src/ScopedCallable.sol";
 import {SharedBridge} from "../src/SharedBridge.sol";
 import {BridgeL2} from "../src/BridgeL2.sol";
-import {ISharedBridge} from "../src/ISharedBridge.sol";
 import {IBridgeL2} from "../src/IBridgeL2.sol";
+import {ISharedBridge} from "../src/ISharedBridge.sol";
 
 contract SharedBridgeMock is SharedBridge {
     constructor(address sequencer, uint256 chainId) SharedBridge(sequencer, chainId) {}
@@ -50,7 +51,7 @@ contract ComposabilityTester is Test {
 
     function setUp() public {
         mainnet = new SharedBridgeMock(sequencer, mainnetId);
-        rollup = new BridgeL2(address(mainnet), rollupId, sequencer);
+        rollup = new BridgeL2(address(mainnet), rollupId, sequencer, makeAddr("owner"));
 
         vm.prank(sequencer);
         mainnet.editSupportedChain(rollupId, true);
@@ -72,9 +73,9 @@ contract ComposabilityTester is Test {
     function createCrossCallAndHash(CrossCallParams memory params)
         internal
         view
-        returns (ICrossChainCaller.CrossCall memory txn, bytes32 txHash)
+        returns (IScopedCallable.ScopedRequest memory txn, bytes32 txHash)
     {
-        txn = ICrossChainCaller.CrossCall({
+        txn = IScopedCallable.ScopedRequest({
             to: params.target,
             gasLimit: params.gasLimit,
             value: params.value,
@@ -98,14 +99,14 @@ contract ComposabilityTester is Test {
         chainIds[0] = rollupId;
         results[0] = ""; // mintETH() return empty bytes
         resultHashes[0] = keccak256(""); // deposit() and mintETH() return empty bytes
-        mainnet.fillResultsInbox(chainIds, resultHashes, results);
+        mainnet.fillResponsesIn(chainIds, resultHashes, results);
 
         // Deposit via mainnet shared bridge
         vm.prank(alice);
         mainnet.deposit{value: 1 ether}(rollupId, bob);
 
         // Reconstruct the outbound L1->L2 transaction using helper
-        (ICrossChainCaller.CrossCall memory txn,) = createCrossCallAndHash(
+        (IScopedCallable.ScopedRequest memory txn,) = createCrossCallAndHash(
             CrossCallParams({
                 target: mainnet.l2BridgeAddresses(rollupId),
                 data: abi.encodeCall(IBridgeL2.mintETH, (bob)),
@@ -121,7 +122,7 @@ contract ComposabilityTester is Test {
         // Execute the L2 privileged transaction handler
         // This will call the mintETH() function on the rollup
         vm.startPrank(address(rollup));
-        rollup.xCallHandler(mainnetId, mainnet.l2BridgeAddresses(rollupId), nonce, txn);
+        rollup.handleScopedCall(mainnetId, mainnet.l2BridgeAddresses(rollupId), nonce, txn);
         vm.stopPrank();
 
         // Verify balances are correct
@@ -129,7 +130,7 @@ contract ComposabilityTester is Test {
         assertEq(bob.balance, 1 ether);
 
         // Verify mailbox states
-        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
+        assert(mainnet.rollingHashesEqual(rollupId, rollup.getRollingHashes(mainnetId)));
     }
 
     function test_l2ToL1_withdrawal() public {
@@ -146,7 +147,7 @@ contract ComposabilityTester is Test {
         chainIds[0] = mainnetId;
         results[0] = ""; // withdraw() return empty bytes
         resultHashes[0] = keccak256(""); // withdraw() return empty bytes
-        rollup.fillResultsInbox(chainIds, resultHashes, results);
+        rollup.fillResponsesIn(chainIds, resultHashes, results);
 
         // Pretend the rollup has 1 ETH locked already
         mainnet.editLockedEth(rollupId, 1 ether);
@@ -157,7 +158,7 @@ contract ComposabilityTester is Test {
         rollup.withdraw{value: 1 ether}(mainnetId, bob);
 
         // Reconstruct the outbound L2->L1 transaction using helper
-        (ICrossChainCaller.CrossCall memory txn,) = createCrossCallAndHash(
+        (IScopedCallable.ScopedRequest memory txn,) = createCrossCallAndHash(
             CrossCallParams({
                 target: address(mainnet),
                 data: abi.encodeCall(ISharedBridge.handleWithdrawal, (rollupId, bob, 1 ether)),
@@ -173,7 +174,7 @@ contract ComposabilityTester is Test {
         // Execute the L2 privileged transaction handler
         // This will call the handleWithdrawal() function on the mainnet
         vm.startPrank(sequencer);
-        mainnet.xCallHandler(rollupId, address(rollup), nonce, txn);
+        mainnet.handleScopedCall(rollupId, address(rollup), nonce, txn);
         vm.stopPrank();
 
         // Verify balances are correct
@@ -181,7 +182,7 @@ contract ComposabilityTester is Test {
         assertEq(bob.balance, 1 ether);
 
         // Verify mailbox states
-        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
+        assert(mainnet.rollingHashesEqual(rollupId, rollup.getRollingHashes(mainnetId)));
     }
 
     function test_l1ToL2_call() public {
@@ -194,7 +195,7 @@ contract ComposabilityTester is Test {
         bytes32[] memory txHashes = new bytes32[](1);
 
         // Construct the outbound L1->L2 transaction
-        (ICrossChainCaller.CrossCall memory txn, bytes32 txHash) = createCrossCallAndHash(
+        (IScopedCallable.ScopedRequest memory txn, bytes32 txHash) = createCrossCallAndHash(
             CrossCallParams({
                 target: address(target),
                 data: abi.encodeCall(TargetContract.updateState, ()),
@@ -211,23 +212,23 @@ contract ComposabilityTester is Test {
         chainIds[0] = rollupId; // Result is from the rollup
         results[0] = abi.encode(1); // updateState() would return 1
         txHashes[0] = txHash; // transaction hash that will be used by xCall
-        mainnet.fillResultsInbox(chainIds, txHashes, results);
+        mainnet.fillResponsesIn(chainIds, txHashes, results);
 
         // Execute the xCall from L1
         vm.startPrank(sequencer);
-        bytes memory result = mainnet.xCall(rollupId, alice, txn);
+        bytes memory result = mainnet.scopedCall(rollupId, alice, txn);
         vm.stopPrank();
 
         // Execute the xCallHandler from L2
         vm.startPrank(address(rollup));
-        rollup.xCallHandler(mainnetId, alice, nonce, txn);
+        rollup.handleScopedCall(mainnetId, alice, nonce, txn);
         vm.stopPrank();
 
         // Verify the result
         assertEq(result, abi.encode(target.getState()), "result != target.getState()");
 
         // Verify mailbox states
-        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
+        assert(mainnet.rollingHashesEqual(rollupId, rollup.getRollingHashes(mainnetId)));
     }
 
     function test_l2ToL1_call() public {
@@ -240,7 +241,7 @@ contract ComposabilityTester is Test {
         bytes32[] memory txHashes = new bytes32[](1);
 
         // Construct the outbound L2->L1 transaction
-        (ICrossChainCaller.CrossCall memory txn, bytes32 txHash) = createCrossCallAndHash(
+        (IScopedCallable.ScopedRequest memory txn, bytes32 txHash) = createCrossCallAndHash(
             CrossCallParams({
                 target: address(target),
                 data: abi.encodeCall(TargetContract.updateState, ()),
@@ -257,22 +258,22 @@ contract ComposabilityTester is Test {
         chainIds[0] = mainnetId; // Result is from mainnet
         results[0] = abi.encode(1); // updateState() would return 1
         txHashes[0] = txHash; // transaction hash that will be used by xCall
-        rollup.fillResultsInbox(chainIds, txHashes, results);
+        rollup.fillResponsesIn(chainIds, txHashes, results);
 
         // Execute the xCall from L2
         vm.startPrank(sequencer);
-        bytes memory result = rollup.xCall(mainnetId, alice, txn);
+        bytes memory result = rollup.scopedCall(mainnetId, alice, txn);
         vm.stopPrank();
 
         // Execute the xCallHandler from L1
         vm.startPrank(address(sequencer));
-        mainnet.xCallHandler(rollupId, alice, nonce, txn);
+        mainnet.handleScopedCall(rollupId, alice, nonce, txn);
         vm.stopPrank();
 
         // Verify the result
         assertEq(result, abi.encode(target.getState()), "result != target.getState()");
 
         // Verify mailbox states
-        assert(mainnet.mailboxEquals(rollupId, rollup.readMailboxes(mainnetId)));
+        assert(mainnet.rollingHashesEqual(rollupId, rollup.getRollingHashes(mainnetId)));
     }
 }

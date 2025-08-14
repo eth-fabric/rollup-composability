@@ -1,48 +1,61 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity ^0.8.13;
 
-import {CrossChainCaller} from "./CrossChainCaller.sol";
-import {ICrossChainCaller} from "./ICrossChainCaller.sol";
+import {ScopedCallable} from "./ScopedCallable.sol";
+import {IScopedCallable} from "./IScopedCallable.sol";
+import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 import {ISharedBridge} from "./ISharedBridge.sol";
 import {IBridgeL2} from "./IBridgeL2.sol";
 
-contract BridgeL2 is CrossChainCaller, IBridgeL2 {
+contract BridgeL2 is ScopedCallable, IBridgeL2 {
     address public constant L1_MESSENGER = 0x000000000000000000000000000000000000FFFE;
     address public constant BURN_ADDRESS = 0x0000000000000000000000000000000000000000;
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    address public L1_BRIDGE;
-    address public SEQUENCER;
+    address public immutable l1Bridge;
+    address public sequencer;
+    address public owner;
 
     // Some calls come as a privileged transaction, whose sender is the bridge itself.
     modifier onlySelf() {
-        require(msg.sender == address(this), "BridgeL2: caller is not the bridge");
+        if (msg.sender != address(this)) revert InvalidSender();
         _;
     }
 
     modifier onlySequencer() {
-        require(msg.sender == SEQUENCER, "BridgeL2: caller is not the sequencer");
+        if (msg.sender != sequencer) revert OnlySequencer();
         _;
     }
 
-    constructor(address _l1Bridge, uint256 chainId_, address sequencer) CrossChainCaller(chainId_) {
-        L1_BRIDGE = _l1Bridge;
-        SEQUENCER = sequencer;
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
     }
 
-    function xCall(uint256 chainId, address from, CrossCall memory txn) external onlySequencer returns (bytes memory) {
-        if (!_chainSupported(chainId)) revert UnsupportedChain();
-
-        return _xCall(chainId, from, txn);
+    constructor(address _l1Bridge, uint256 chainId_, address sequencer_, address owner_) ScopedCallable(chainId_) {
+        l1Bridge = _l1Bridge;
+        _setSequencer(sequencer_);
+        owner = owner_;
     }
 
-    function xCallHandler(uint256 sourceChainId, address from, uint256 nonce, ICrossChainCaller.CrossCall memory txn)
+    function scopedCall(uint256 chainId, address from, ScopedRequest memory request)
         external
-        onlySelf
+        onlySequencer
+        returns (bytes memory)
     {
+        if (!_chainSupported(chainId)) revert UnsupportedChain();
+        return _scopedCall(chainId, from, request);
+    }
+
+    function handleScopedCall(
+        uint256 sourceChainId,
+        address from,
+        uint256 nonce,
+        IScopedCallable.ScopedRequest memory request
+    ) external onlySelf {
         if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
-        _xCallHandler(sourceChainId, from, nonce, txn);
+        _handleScopedCall(sourceChainId, from, nonce, request);
     }
 
     function mintETH(address to) external payable onlySelf {
@@ -59,15 +72,25 @@ contract BridgeL2 is CrossChainCaller, IBridgeL2 {
 
         emit WithdrawalInitiated(msg.sender, _receiver, msg.value);
 
-        ICrossChainCaller.CrossCall memory crossCall = ICrossChainCaller.CrossCall({
-            to: L1_BRIDGE,
+        IScopedCallable.ScopedRequest memory scopedRequest = IScopedCallable.ScopedRequest({
+            to: l1Bridge,
             gasLimit: 21000 * 5,
             value: 0,
             data: abi.encodeCall(ISharedBridge.handleWithdrawal, (_chainId, _receiver, msg.value))
         });
 
         // Initiate cross-chain withdrawal at the target chain
-        _xCall(targetChainId, address(this), crossCall);
+        _scopedCall(targetChainId, address(this), scopedRequest);
+    }
+
+    function setSequencer(address newSequencer) external onlyOwner {
+        _setSequencer(newSequencer);
+    }
+
+    function _setSequencer(address newSequencer) internal {
+        address oldSequencer = sequencer;
+        sequencer = newSequencer;
+        emit SequencerUpdated(oldSequencer, newSequencer);
     }
 
     function editSupportedChain(uint256 chainId, bool supported) external onlySequencer {
