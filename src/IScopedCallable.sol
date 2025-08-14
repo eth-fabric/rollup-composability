@@ -38,6 +38,27 @@ interface IScopedCallable {
 
     event ScopedCallExecuted(bytes32 indexed requestHash, bytes response);
 
+    /// @notice Initiates a synchronous cross-chain call.
+    /// @dev Emits an event, updates a nonce, and updates the requestsOutHash.
+    ///      Reads the result from the responsesIn array (pre-filled by the sequencer).
+    /// @param targetChainId The ID of the chain the `ScopedRequest` will execute on.
+    /// @param from The address that initiated the cross-chain call on the source chain.
+    /// @param request Encoded function call for the destination chain.
+    /// @return response The result bytes returned from the responsesIn array.
+    function scopedCall(uint256 targetChainId, address from, ScopedRequest calldata request)
+        external
+        payable
+        returns (bytes memory response);
+
+    /// @notice Executes a cross-chain call.
+    /// @dev Called by the sequencer. Updates requestsInHash, emits an event, and updates responsesOutHash.
+    /// @param sourceChainId The ID of the chain the `ScopedRequest` was initiated from.
+    /// @param from The sender address on the origin chain.
+    /// @param nonce A unique nonce for deduplication.
+    /// @param request Encoded call to execute locally.
+    function handleScopedCall(uint256 sourceChainId, address from, uint256 nonce, ScopedRequest calldata request)
+        external;
+
     /// @notice Fills the responses inbox with pre-simulated responses for cross-chain calls
     /// @dev This is called by the sequencer to populate responses before scopedCall is executed
     /// @param chainIds Chain IDs corresponding to each response

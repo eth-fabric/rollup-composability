@@ -13,36 +13,16 @@ contract Foo {
     }
 }
 
-contract ScopedCallableImpl is ScopedCallable {
-    constructor(uint256 chainId) ScopedCallable(chainId) {}
-
-    function scopedCall(uint256 targetChainId, address from, IScopedCallable.ScopedRequest calldata txn)
-        external
-        returns (bytes memory)
-    {
-        return _scopedCall(targetChainId, from, txn);
-    }
-
-    function handleScopedCall(
-        uint256 sourceChainId,
-        address from,
-        uint256 nonce,
-        IScopedCallable.ScopedRequest calldata txn
-    ) external {
-        _handleScopedCall(sourceChainId, from, nonce, txn);
-    }
-}
-
 contract CrossChainCallerTester is Test {
-    ScopedCallableImpl public chainA;
-    ScopedCallableImpl public chainB;
+    ScopedCallable public chainA;
+    ScopedCallable public chainB;
     Foo public foo;
     uint256 public chainAId = 1;
     uint256 public chainBId = 2;
 
     function setUp() public {
-        chainA = new ScopedCallableImpl(chainAId);
-        chainB = new ScopedCallableImpl(chainBId);
+        chainA = new ScopedCallable(chainAId);
+        chainB = new ScopedCallable(chainBId);
         foo = new Foo();
     }
 

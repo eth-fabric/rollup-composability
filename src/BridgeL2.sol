@@ -39,13 +39,15 @@ contract BridgeL2 is ScopedCallable, IBridgeL2 {
         owner = owner_;
     }
 
-    function scopedCall(uint256 chainId, address from, ScopedRequest memory request)
+    function scopedCall(uint256 targetChainId, address from, ScopedRequest memory request)
         external
+        payable
+        override
         onlySequencer
-        returns (bytes memory)
+        returns (bytes memory response)
     {
-        if (!_chainSupported(chainId)) revert UnsupportedChain();
-        return _scopedCall(chainId, from, request);
+        if (!_chainSupported(targetChainId)) revert UnsupportedChain();
+        response = _scopedCall(targetChainId, from, request);
     }
 
     function handleScopedCall(
@@ -53,7 +55,7 @@ contract BridgeL2 is ScopedCallable, IBridgeL2 {
         address from,
         uint256 nonce,
         IScopedCallable.ScopedRequest memory request
-    ) external onlySelf {
+    ) external override onlySelf {
         if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
         _handleScopedCall(sourceChainId, from, nonce, request);
     }

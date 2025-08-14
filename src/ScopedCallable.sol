@@ -15,6 +15,24 @@ contract ScopedCallable is IScopedCallable {
     }
 
     /// @inheritdoc IScopedCallable
+    function scopedCall(uint256 targetChainId, address from, ScopedRequest memory request)
+        external
+        payable
+        virtual
+        returns (bytes memory response)
+    {
+        return _scopedCall(targetChainId, from, request);
+    }
+
+    /// @inheritdoc IScopedCallable
+    function handleScopedCall(uint256 sourceChainId, address from, uint256 nonce, ScopedRequest memory request)
+        external
+        virtual
+    {
+        return _handleScopedCall(sourceChainId, from, nonce, request);
+    }
+
+    /// @inheritdoc IScopedCallable
     function fillResponsesIn(uint256[] calldata chainIds, bytes32[] calldata requestHashes, bytes[] calldata responses)
         external
     {
@@ -84,10 +102,10 @@ contract ScopedCallable is IScopedCallable {
     /// @param targetChainId Target chain ID to send the cross-chain call to
     /// @param from The address that initiated the cross-chain call on the source chain
     /// @param request Encapsulates target address, gas limit, value, and calldata
-    /// @return The result bytes returned by the cross-chain call
+    /// @return response The result bytes returned by the cross-chain call
     function _scopedCall(uint256 targetChainId, address from, ScopedRequest memory request)
         internal
-        returns (bytes memory)
+        returns (bytes memory response)
     {
         // Increment and capture the nonce for this cross-chain message
         uint256 nonce = _globalScopedCallNonce++;
@@ -103,7 +121,7 @@ contract ScopedCallable is IScopedCallable {
         emit ScopedCall(targetChainId, from, request.to, nonce, request.value, request.gasLimit, request.data);
 
         // Read prefilled result from inbox (already simulated by sequencer)
-        return _readResponsesInboxValue(targetChainId, requestHash);
+        response = _readResponsesInboxValue(targetChainId, requestHash);
     }
 
     /// @notice Executes a transaction received via scopedCall from a source chain.

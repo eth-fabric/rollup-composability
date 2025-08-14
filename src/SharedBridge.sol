@@ -41,20 +41,23 @@ contract SharedBridge is ScopedCallable, ISharedBridge {
         _deposit(chainId, l2Recipient);
     }
 
-    function scopedCall(uint256 chainId, address from, ScopedRequest memory request)
+    function scopedCall(uint256 targetChainId, address from, ScopedRequest memory request)
         external
+        payable
+        override
         onlySequencer
-        returns (bytes memory)
+        returns (bytes memory response)
     {
-        if (!_chainSupported(chainId)) revert UnsupportedChain();
+        if (!_chainSupported(targetChainId)) revert UnsupportedChain();
 
         // Only deposit() can use the L2 bridge address
-        if (from == l2BridgeAddresses[chainId]) revert InvalidSender();
-        return _scopedCall(chainId, from, request);
+        if (from == l2BridgeAddresses[targetChainId]) revert InvalidSender();
+        response = _scopedCall(targetChainId, from, request);
     }
 
     function handleScopedCall(uint256 sourceChainId, address from, uint256 nonce, ScopedRequest memory request)
         external
+        override
         onlySequencer
     {
         if (!_chainSupported(sourceChainId)) revert UnsupportedChain();
