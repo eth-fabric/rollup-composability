@@ -35,6 +35,7 @@ interface IScopedCallable {
     );
 
     error UnsupportedChain();
+    error CrossChainCallFailed();
 
     event ScopedCallExecuted(bytes32 indexed requestHash, bytes response);
 
