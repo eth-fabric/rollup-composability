@@ -87,18 +87,14 @@ contract ScopedCallable is IScopedCallable {
         LibTransient.setCompat(p, value);
     }
 
-    function _calcStorageKey(RollingHashType rollingHashType, bytes memory bridge, bytes32 requestHash)
-        internal
-        pure
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(rollingHashType, bridge, requestHash));
+    function _calcStorageKey(bytes memory bridge, bytes32 requestHash) public pure returns (bytes32) {
+        return keccak256(abi.encode(RollingHashType.RESPONSES_IN_VALUES, bridge, requestHash));
     }
 
     // Writes bytes to transient storage
     function _writeResponsesInboxValue(bytes calldata bridge, bytes32 requestHash, bytes memory result) internal {
         // Each chainId has its own unique transient storage slot
-        bytes32 responseLocation = _calcStorageKey(RollingHashType.RESPONSES_IN_VALUES, bridge, requestHash);
+        bytes32 responseLocation = _calcStorageKey(bridge, requestHash);
 
         // Get a pointer to the transient storage
         LibTransient.TBytes storage p = LibTransient.tBytes(responseLocation);

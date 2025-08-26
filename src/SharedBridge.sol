@@ -122,7 +122,7 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
 
         // sendId is the storage location of the response for the calling function to synchronously read
         // This allows compatibility with the ERC7786 spec since we can't explicitly return bytes
-        sendId = _calcStorageKey(RollingHashType.RESPONSES_IN_VALUES, bridge, requestHash);
+        sendId = _calcStorageKey(bridge, requestHash);
 
         emit MessageSent(sendId, sender, recipient, payload, msg.value, attributes);
     }
@@ -147,7 +147,7 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
             abi.decode(payload, (uint256, bytes, bytes, uint256, bytes));
 
         // The receiveId should match the sendId
-        if (receiveId != _calcStorageKey(RollingHashType.RESPONSES_IN_VALUES, recipient, requestHash)) {
+        if (receiveId != _calcStorageKey(recipient, requestHash)) {
             revert InvalidReceiveId(receiveId);
         }
 
