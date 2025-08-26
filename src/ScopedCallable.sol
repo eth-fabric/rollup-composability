@@ -10,8 +10,9 @@ contract ScopedCallable is IScopedCallable {
     function fillResponsesIn(bytes[] calldata bridges, bytes32[] calldata requestHashes, bytes[] calldata responses)
         external
     {
-        require(requestHashes.length == responses.length, "requestHashes and responses must have the same length");
-        require(bridges.length == requestHashes.length, "bridges and requestHashes must have the same length");
+        if (requestHashes.length != responses.length) revert LengthMismatch();
+        if (bridges.length != requestHashes.length) revert LengthMismatch();
+
         for (uint256 i = 0; i < requestHashes.length; i++) {
             _writeResponsesInboxValue(bridges[i], requestHashes[i], responses[i]);
             _updateRollingHash(bridges[i], keccak256(responses[i]), RollingHashType.RESPONSES_IN);

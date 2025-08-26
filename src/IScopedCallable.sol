@@ -17,6 +17,8 @@ interface IScopedCallable {
         RESPONSES_IN_VALUES
     }
 
+    error LengthMismatch();
+
     /// @notice Fills the responses inbox with pre-simulated responses for cross-chain calls
     /// @dev This is called by the sequencer to populate responses before scopedCall is executed
     /// @param bridges Bridges corresponding to each response
