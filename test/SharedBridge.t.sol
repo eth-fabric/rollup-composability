@@ -7,7 +7,7 @@ import {IScopedCallable} from "../src/IScopedCallable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 contract Foo {
-    function bar() public pure returns (uint256) {
+    function bar() public payable returns (uint256) {
         return 42;
     }
 }
@@ -40,9 +40,17 @@ contract CrossChainCallTester is Test {
         bridgeA.registerRemoteBridge(bridgeBId);
         vm.prank(owner);
         bridgeB.registerRemoteBridge(bridgeAId);
+
+        // Set up some initial balance for the bridges
+        vm.deal(address(bridgeA), 10000 ether);
+        vm.deal(address(bridgeB), 10000 ether);
     }
 
     function test_sendAndReceiveMessage() public {
+        address alice = makeAddr("alice");
+        uint256 value = 100 ether;
+        vm.deal(alice, value);
+
         uint256 nonce = 0;
 
         // Request to call foo.bar() on chainB
@@ -51,7 +59,7 @@ contract CrossChainCallTester is Test {
 
         // Figure out the requestHash
         bytes memory unwrappedPayload = abi.encode(request);
-        bytes memory wrappedPayload = abi.encode(++nonce, bridgeAId, bridgeBId, 0, unwrappedPayload);
+        bytes memory wrappedPayload = abi.encode(++nonce, bridgeAId, bridgeBId, value, unwrappedPayload);
         bytes32 requestHash = keccak256(wrappedPayload);
         bytes32 sendId = bridgeA._calcStorageKey(bridgeBId, requestHash);
 
@@ -72,8 +80,8 @@ contract CrossChainCallTester is Test {
 
         // Call the sendMessage on chainA
         bytes[] memory attributes = new bytes[](1);
-        vm.prank(gateway);
-        bytes32 requestLocation = bridgeA.sendMessage(bridgeBId, unwrappedPayload, attributes);
+        vm.prank(alice);
+        bytes32 requestLocation = bridgeA.sendMessage{value: value}(bridgeBId, unwrappedPayload, attributes);
 
         // Read the response from the inbox
         bytes memory response = bridgeA.readResponsesInboxValue(requestLocation);
@@ -121,5 +129,9 @@ contract CrossChainCallTester is Test {
             bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.REQUESTS_OUT),
             "A's requestsInbox should be equal to B's requestsOutbox"
         );
+
+        // Check alice's balance decreased
+        assertEq(alice.balance, 0);
+        assertEq(address(foo).balance, value);
     }
 }

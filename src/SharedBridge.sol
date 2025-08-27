@@ -3,7 +3,6 @@ pragma solidity ^0.8.13;
 
 import {ScopedCallable} from "./ScopedCallable.sol";
 import {IScopedCallable} from "./IScopedCallable.sol";
-import {IBridgeL2} from "./IBridgeL2.sol";
 import {IERC7786GatewaySource, IERC7786Receiver} from "./IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
