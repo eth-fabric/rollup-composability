@@ -1,140 +1,137 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {IScopedCallable} from "../src/IScopedCallable.sol";
 import {SharedBridge} from "../src/SharedBridge.sol";
-import {ISharedBridge} from "../src/ISharedBridge.sol";
-import {IBridgeL2} from "../src/IBridgeL2.sol";
+import {IScopedCallable} from "../src/IScopedCallable.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-contract DepositTester is Test {
-    SharedBridge public chainA;
-    uint256 public chainAId = 1;
-    uint256 public chainBId = 2;
-    address public sequencer = makeAddr("sequencer");
-
-    function setUp() public {
-        chainA = new SharedBridge(sequencer, chainAId);
-
-        vm.prank(sequencer);
-        chainA.editSupportedChain(chainBId, true);
-
-        vm.prank(sequencer);
-        chainA.setL2BridgeAddress(chainBId, makeAddr("chainB"));
-    }
-
-    function test_deposit() public {
-        address from = makeAddr("alice");
-        vm.deal(from, 100 ether);
-
-        // Verify reverts on unsupported chain
-        vm.prank(from);
-        vm.expectRevert(abi.encodeWithSelector(IScopedCallable.UnsupportedChain.selector));
-        chainA.deposit{value: 1 ether}(chainAId, from);
-
-        // Verify deposit on supported chain
-        vm.prank(from);
-        chainA.deposit{value: 1 ether}(chainBId, from);
-
-        // Reconstruct the expected transaction hash
-        bytes32 expectedHash = chainA.getTransactionHash(
-            chainAId,
-            chainBId,
-            chainA.l2BridgeAddresses(chainBId),
-            0,
-            IScopedCallable.ScopedRequest({
-                to: chainA.l2BridgeAddresses(chainBId),
-                value: 1 ether,
-                gasLimit: 21000 * 5,
-                data: abi.encodeCall(IBridgeL2.mintETH, (from))
-            })
-        );
-        // Verify mailbox states
-        IScopedCallable.RollingHashes memory rollingHashes = chainA.getRollingHashes(chainBId);
-
-        // Verify transactionsOutbox correctly written
-        assertEq(
-            rollingHashes.requestsOut, keccak256(abi.encodePacked(bytes32(0), expectedHash)), "requestsOut incorrect"
-        );
+contract Foo {
+    function bar() public payable returns (uint256) {
+        return 42;
     }
 }
 
-contract WithdrawalTester is Test {
-    SharedBridge public chainA;
-    uint256 public chainAId = 1;
-    uint256 public chainBId = 2;
-    address public sequencer = makeAddr("sequencer");
+contract CrossChainCallTester is Test {
+    SharedBridge public bridgeA;
+    SharedBridge public bridgeB;
+    Foo public foo;
+    bytes public bridgeAId;
+    bytes public bridgeBId;
+    address owner = makeAddr("owner");
+    address gateway = makeAddr("gateway");
 
     function setUp() public {
-        chainA = new SharedBridge(sequencer, chainAId);
+        address[] memory gateways = new address[](1);
+        gateways[0] = gateway;
+        bytes4[] memory attributes = new bytes4[](1);
+        attributes[0] = 0x00000000;
 
-        vm.prank(sequencer);
-        chainA.editSupportedChain(chainBId, true);
+        foo = new Foo();
+        bridgeA = new SharedBridge(owner, gateways, attributes);
+        bridgeB = new SharedBridge(owner, gateways, attributes);
 
-        vm.prank(sequencer);
-        chainA.setL2BridgeAddress(chainBId, makeAddr("chainB"));
+        // For local testing, we use the same chainid for both
+        bridgeAId = InteroperableAddress.formatEvmV1(block.chainid, address(bridgeA));
+        bridgeBId = InteroperableAddress.formatEvmV1(block.chainid, address(bridgeB));
+
+        // Register the remote bridges
+        vm.prank(owner);
+        bridgeA.registerRemoteBridge(bridgeBId);
+        vm.prank(owner);
+        bridgeB.registerRemoteBridge(bridgeAId);
+
+        // Set up some initial balance for the bridges
+        vm.deal(address(bridgeA), 10000 ether);
+        vm.deal(address(bridgeB), 10000 ether);
     }
 
-    function test_withdrawal() public {
-        address from = makeAddr("alice");
-        vm.deal(from, 100 ether);
+    function test_sendAndReceiveMessage() public {
+        address alice = makeAddr("alice");
+        uint256 value = 100 ether;
+        vm.deal(alice, value);
 
-        // Deposit 1 ether to SharedBridge
-        vm.prank(from);
-        chainA.deposit{value: 1 ether}(chainBId, from);
+        uint256 nonce = 0;
 
-        // Verify deposit worked
-        assertEq(from.balance, 99 ether);
-        assertEq(address(chainA).balance, 1 ether);
+        // Request to call foo.bar() on chainB
+        SharedBridge.Request memory request =
+            SharedBridge.Request({to: address(foo), gasLimit: 1000000, data: abi.encodeWithSelector(Foo.bar.selector)});
 
-        // Create a withdrawal transaction for 1 ether
-        IScopedCallable.ScopedRequest memory txn = IScopedCallable.ScopedRequest({
-            to: address(chainA),
-            gasLimit: 21000 * 5,
-            value: 0,
-            data: abi.encodeCall(ISharedBridge.handleWithdrawal, (chainBId, from, 1 ether))
-        });
+        // Figure out the requestHash
+        bytes memory unwrappedPayload = abi.encode(request);
+        bytes memory wrappedPayload = abi.encode(++nonce, bridgeAId, bridgeBId, value, unwrappedPayload);
+        bytes32 requestHash = keccak256(wrappedPayload);
+        bytes32 sendId = bridgeA._calcStorageKey(bridgeBId, requestHash);
 
-        // Execute withdrawal transaction
-        vm.startPrank(sequencer);
-        chainA.handleScopedCall(chainBId, chainA.l2BridgeAddresses(chainBId), 0, txn);
-        vm.stopPrank();
+        // Assume sequencer has simulated ahead of time to determine the response
+        bytes[] memory bridges = new bytes[](1);
+        bytes32[] memory requestHashes = new bytes32[](1);
+        bytes[] memory simulatedResponses = new bytes[](1);
+        bridges[0] = bridgeBId;
+        requestHashes[0] = requestHash;
+        simulatedResponses[0] = abi.encode(foo.bar()); // The "simulated" response
 
-        // Verify withdrawal worked
-        assertEq(from.balance, 100 ether);
-        assertEq(address(chainA).balance, 0 ether);
+        // Pre-populate chainA's inbox with simulated responses
+        bridgeA.fillResponsesIn(bridges, requestHashes, simulatedResponses);
 
-        // ---- Verify mailbox states ----
-        IScopedCallable.RollingHashes memory rollingHashes = chainA.getRollingHashes(chainBId);
+        // Call the executeMessage handler on chainB (would be called in their rollup execution environment)
+        vm.prank(gateway);
+        bridgeB.receiveMessage(sendId, bridgeAId, wrappedPayload);
 
-        // Verify transactionsOutbox correctly written from the deposit() call
-        bytes32 expectedHash = chainA.getTransactionHash(
-            chainAId,
-            chainBId,
-            chainA.l2BridgeAddresses(chainBId),
-            0,
-            IScopedCallable.ScopedRequest({
-                to: chainA.l2BridgeAddresses(chainBId),
-                value: 1 ether,
-                gasLimit: 21000 * 5,
-                data: abi.encodeCall(IBridgeL2.mintETH, (from))
-            })
-        );
+        // Call the sendMessage on chainA
+        bytes[] memory attributes = new bytes[](1);
+        vm.prank(alice);
+        bytes32 requestLocation = bridgeA.sendMessage{value: value}(bridgeBId, unwrappedPayload, attributes);
+
+        // Read the response from the inbox
+        bytes memory response = bridgeA.readResponsesInboxValue(requestLocation);
+
+        // Check the response value returned correctly
+        assertEq(response, simulatedResponses[0], "response should be equal to expected response");
+
+        // Check the response value written correctly and hashed correctly
         assertEq(
-            rollingHashes.requestsOut, keccak256(abi.encodePacked(bytes32(0), expectedHash)), "requestsOut incorrect"
+            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_IN),
+            keccak256(
+                abi.encodePacked(
+                    bytes32(0), // rolling hash is building on empty bytes32
+                    keccak256(response)
+                )
+            )
         );
 
-        // Reconstruct the expected inbound transaction hash from the handleWithdrawal() call
-        expectedHash = chainA.getTransactionHash(chainBId, chainAId, chainA.l2BridgeAddresses(chainBId), 0, txn);
+        // MAILBOX EQUIVALENCE CHECKS
 
-        // Verify requestsInbox correctly written
+        // ChainB handled sendMessage requests from ChainA in order
         assertEq(
-            rollingHashes.requestsIn, keccak256(abi.encodePacked(bytes32(0), expectedHash)), "requestsIn incorrect"
+            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.REQUESTS_OUT),
+            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.REQUESTS_IN),
+            "A's requestsOutbox should be equal to B's requestsInbox"
         );
 
-        // Results outbox should be populated with hash of empty return value from the handleWithdrawal() call
+        // ChainA received responses from ChainB in order
         assertEq(
-            rollingHashes.responsesOut, keccak256(abi.encodePacked(bytes32(0), keccak256(""))), "responsesOut incorrect"
+            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_OUT),
+            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.RESPONSES_IN),
+            "A's responsesOutbox should be equal to B's responsesInbox"
         );
+
+        // ChainB received responses from ChainA in order
+        assertEq(
+            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_IN),
+            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.RESPONSES_OUT),
+            "A's responsesInbox should be equal to B's responsesOutbox"
+        );
+
+        // ChainA handled receiveMessage requests from ChainB in order
+        assertEq(
+            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.REQUESTS_IN),
+            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.REQUESTS_OUT),
+            "A's requestsInbox should be equal to B's requestsOutbox"
+        );
+
+        // Check alice's balance decreased
+        assertEq(alice.balance, 0);
+        assertEq(address(foo).balance, value);
     }
 }
