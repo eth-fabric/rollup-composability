@@ -19,6 +19,7 @@ contract TargetContract {
     }
 }
 
+// Assume this is a user contract on mainnet
 contract UserContract {
     address payable public mainnet;
     address payable public rollup;
@@ -31,12 +32,16 @@ contract UserContract {
     }
 
     function crossChainAction() public {
-        bytes memory rollupId = SharedBridge(rollup).bridgeId();
-        bytes memory payload = getPayload();
         bytes[] memory attributes = new bytes[](0);
 
+        // Target contract as an interoperable address
+        bytes memory recipient = InteroperableAddress.formatEvmV1(block.chainid, target);
+
+        // Payload to be sent cross chain
+        bytes memory data = abi.encodeWithSelector(TargetContract(target).updateState.selector);
+
         // Make the call on mainnet
-        bytes32 sendId = SharedBridge(mainnet).sendMessage(rollupId, payload, attributes);
+        bytes32 sendId = SharedBridge(mainnet).sendMessage(recipient, data, attributes);
 
         // Read the response on mainnet
         bytes memory response = SharedBridge(mainnet).readResponsesInboxValue(sendId);
@@ -44,12 +49,6 @@ contract UserContract {
 
         // Do something with the response
         require(number == 1, "new state should be 1");
-    }
-
-    function getPayload() public returns (bytes memory) {
-        bytes memory data = abi.encodeWithSelector(TargetContract(target).updateState.selector);
-        bytes memory payload = abi.encode(SharedBridge.Request({to: address(target), gasLimit: 1000000, data: data}));
-        return payload;
     }
 }
 
@@ -59,8 +58,8 @@ contract ComposabilityTester is Test {
     TargetContract public target;
     UserContract public user;
 
-    bytes public mainnetId;
-    bytes public rollupId;
+    bytes public mainnetAddress;
+    bytes public rollupAddress;
     address owner = makeAddr("owner");
     address gateway = makeAddr("gateway");
 
@@ -76,14 +75,14 @@ contract ComposabilityTester is Test {
         user = new UserContract(payable(mainnet), payable(rollup), address(target));
 
         // For local testing, we use the same chainid for both
-        mainnetId = mainnet.bridgeId();
-        rollupId = rollup.bridgeId();
+        mainnetAddress = mainnet.bridgeAddress();
+        rollupAddress = rollup.bridgeAddress();
 
         // Register the remote bridges
         vm.prank(owner);
-        mainnet.registerRemoteBridge(rollupId);
+        mainnet.registerRemoteBridge(rollupAddress);
         vm.prank(owner);
-        rollup.registerRemoteBridge(mainnetId);
+        rollup.registerRemoteBridge(mainnetAddress);
 
         // Set up some initial balance for the bridges
         vm.deal(address(mainnet), 10000 ether);
@@ -91,14 +90,20 @@ contract ComposabilityTester is Test {
     }
 
     function test_crossChainAction() public {
-        // get the payload to be sent
-        bytes memory payload = user.getPayload();
+        // Nonce at start of test
         uint256 nonce = 0;
 
-        bytes memory wrappedPayload = abi.encode(++nonce, mainnetId, rollupId, 0, payload);
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, address(user));
+        bytes memory recipient = InteroperableAddress.formatEvmV1(block.chainid, address(target));
+
+        // get the payload to be sent
+        bytes memory data = abi.encodeWithSelector(TargetContract(target).updateState.selector);
+
+        // wrap payload as sendMessage does
+        bytes memory wrappedPayload = abi.encode(++nonce, sender, recipient, 0, data);
 
         bytes[] memory bridges = new bytes[](1);
-        bridges[0] = rollupId;
+        bridges[0] = rollupAddress;
 
         bytes32[] memory requestHashes = new bytes32[](1);
         requestHashes[0] = keccak256(wrappedPayload);
@@ -106,9 +111,11 @@ contract ComposabilityTester is Test {
         bytes[] memory simulatedResponses = new bytes[](1);
         simulatedResponses[0] = abi.encode(1); // The "simulated" response
 
+        bytes32 sendId = mainnet._calcStorageKey(rollupAddress, keccak256(wrappedPayload));
+
         // Execute the message on the rollup
         vm.startPrank(gateway);
-        rollup.receiveMessage(mainnet._calcStorageKey(rollupId, keccak256(wrappedPayload)), mainnetId, wrappedPayload);
+        rollup.receiveMessage(sendId, sender, wrappedPayload);
         vm.stopPrank();
 
         // Check the state was updated on rollup

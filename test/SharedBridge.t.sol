@@ -13,11 +13,11 @@ contract Foo {
 }
 
 contract CrossChainCallTester is Test {
-    SharedBridge public bridgeA;
-    SharedBridge public bridgeB;
+    SharedBridge public sendingBridge;
+    SharedBridge public receivingBridge;
     Foo public foo;
-    bytes public bridgeAId;
-    bytes public bridgeBId;
+    bytes public sendingBridgeAddress;
+    bytes public receivingBridgeAddress;
     address owner = makeAddr("owner");
     address gateway = makeAddr("gateway");
 
@@ -28,22 +28,22 @@ contract CrossChainCallTester is Test {
         attributes[0] = 0x00000000;
 
         foo = new Foo();
-        bridgeA = new SharedBridge(owner, gateways, attributes);
-        bridgeB = new SharedBridge(owner, gateways, attributes);
+        sendingBridge = new SharedBridge(owner, gateways, attributes);
+        receivingBridge = new SharedBridge(owner, gateways, attributes);
 
         // For local testing, we use the same chainid for both
-        bridgeAId = InteroperableAddress.formatEvmV1(block.chainid, address(bridgeA));
-        bridgeBId = InteroperableAddress.formatEvmV1(block.chainid, address(bridgeB));
+        sendingBridgeAddress = InteroperableAddress.formatEvmV1(block.chainid, address(sendingBridge));
+        receivingBridgeAddress = InteroperableAddress.formatEvmV1(block.chainid, address(receivingBridge));
 
         // Register the remote bridges
         vm.prank(owner);
-        bridgeA.registerRemoteBridge(bridgeBId);
+        sendingBridge.registerRemoteBridge(receivingBridgeAddress);
         vm.prank(owner);
-        bridgeB.registerRemoteBridge(bridgeAId);
+        receivingBridge.registerRemoteBridge(sendingBridgeAddress);
 
         // Set up some initial balance for the bridges
-        vm.deal(address(bridgeA), 10000 ether);
-        vm.deal(address(bridgeB), 10000 ether);
+        vm.deal(address(sendingBridge), 10000 ether);
+        vm.deal(address(receivingBridge), 10000 ether);
     }
 
     function test_sendAndReceiveMessage() public {
@@ -51,47 +51,52 @@ contract CrossChainCallTester is Test {
         uint256 value = 100 ether;
         vm.deal(alice, value);
 
+        // Alice as an interoperable address
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, alice);
+
+        // Foo as an interoperable address
+        bytes memory recipient = InteroperableAddress.formatEvmV1(block.chainid, address(foo));
+
+        // Nonce at start of test
         uint256 nonce = 0;
 
         // Request to call foo.bar() on chainB
-        SharedBridge.Request memory request =
-            SharedBridge.Request({to: address(foo), gasLimit: 1000000, data: abi.encodeWithSelector(Foo.bar.selector)});
+        bytes memory data = abi.encodeWithSelector(Foo.bar.selector);
 
-        // Figure out the requestHash
-        bytes memory unwrappedPayload = abi.encode(request);
-        bytes memory wrappedPayload = abi.encode(++nonce, bridgeAId, bridgeBId, value, unwrappedPayload);
+        // Figure out what the requestHash will be
+        bytes memory wrappedPayload = abi.encode(++nonce, sender, recipient, value, data);
         bytes32 requestHash = keccak256(wrappedPayload);
-        bytes32 sendId = bridgeA._calcStorageKey(bridgeBId, requestHash);
+        bytes32 sendId = sendingBridge._calcStorageKey(receivingBridgeAddress, requestHash);
 
         // Assume sequencer has simulated ahead of time to determine the response
         bytes[] memory bridges = new bytes[](1);
         bytes32[] memory requestHashes = new bytes32[](1);
         bytes[] memory simulatedResponses = new bytes[](1);
-        bridges[0] = bridgeBId;
+        bridges[0] = receivingBridgeAddress;
         requestHashes[0] = requestHash;
         simulatedResponses[0] = abi.encode(foo.bar()); // The "simulated" response
 
-        // Pre-populate chainA's inbox with simulated responses
-        bridgeA.fillResponsesIn(bridges, requestHashes, simulatedResponses);
+        // Pre-populate sendingBridge's inbox with simulated responses
+        sendingBridge.fillResponsesIn(bridges, requestHashes, simulatedResponses);
 
-        // Call the executeMessage handler on chainB (would be called in their rollup execution environment)
-        vm.prank(gateway);
-        bridgeB.receiveMessage(sendId, bridgeAId, wrappedPayload);
+        // Call the executeMessage handler on receivingBridge (would be called in their rollup execution environment)
+        vm.prank(gateway); // must be called by the whitelisted gateway
+        receivingBridge.receiveMessage(sendId, sender, wrappedPayload);
 
-        // Call the sendMessage on chainA
+        // Call the sendMessage on sendingBridge
         bytes[] memory attributes = new bytes[](1);
-        vm.prank(alice);
-        bytes32 requestLocation = bridgeA.sendMessage{value: value}(bridgeBId, unwrappedPayload, attributes);
+        vm.prank(alice); // must be called by the sender
+        bytes32 gotSendId = sendingBridge.sendMessage{value: value}(recipient, data, attributes);
 
         // Read the response from the inbox
-        bytes memory response = bridgeA.readResponsesInboxValue(requestLocation);
+        bytes memory response = sendingBridge.readResponsesInboxValue(gotSendId);
 
         // Check the response value returned correctly
         assertEq(response, simulatedResponses[0], "response should be equal to expected response");
 
         // Check the response value written correctly and hashed correctly
         assertEq(
-            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_IN),
+            sendingBridge.readRollingHash(receivingBridgeAddress, IScopedCallable.RollingHashType.RESPONSES_IN),
             keccak256(
                 abi.encodePacked(
                     bytes32(0), // rolling hash is building on empty bytes32
@@ -104,30 +109,30 @@ contract CrossChainCallTester is Test {
 
         // ChainB handled sendMessage requests from ChainA in order
         assertEq(
-            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.REQUESTS_OUT),
-            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.REQUESTS_IN),
-            "A's requestsOutbox should be equal to B's requestsInbox"
+            sendingBridge.readRollingHash(receivingBridgeAddress, IScopedCallable.RollingHashType.REQUESTS_OUT),
+            receivingBridge.readRollingHash(sendingBridgeAddress, IScopedCallable.RollingHashType.REQUESTS_IN),
+            "sendingBridge's requestsOutbox should be equal to receivingBridge's requestsInbox"
         );
 
         // ChainA received responses from ChainB in order
         assertEq(
-            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_OUT),
-            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.RESPONSES_IN),
-            "A's responsesOutbox should be equal to B's responsesInbox"
+            sendingBridge.readRollingHash(receivingBridgeAddress, IScopedCallable.RollingHashType.RESPONSES_OUT),
+            receivingBridge.readRollingHash(sendingBridgeAddress, IScopedCallable.RollingHashType.RESPONSES_IN),
+            "sendingBridge's responsesOutbox should be equal to receivingBridge's responsesInbox"
         );
 
         // ChainB received responses from ChainA in order
         assertEq(
-            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.RESPONSES_IN),
-            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.RESPONSES_OUT),
-            "A's responsesInbox should be equal to B's responsesOutbox"
+            sendingBridge.readRollingHash(receivingBridgeAddress, IScopedCallable.RollingHashType.RESPONSES_IN),
+            receivingBridge.readRollingHash(sendingBridgeAddress, IScopedCallable.RollingHashType.RESPONSES_OUT),
+            "sendingBridge's responsesInbox should be equal to receivingBridge's responsesOutbox"
         );
 
         // ChainA handled receiveMessage requests from ChainB in order
         assertEq(
-            bridgeA.readRollingHash(bridgeBId, IScopedCallable.RollingHashType.REQUESTS_IN),
-            bridgeB.readRollingHash(bridgeAId, IScopedCallable.RollingHashType.REQUESTS_OUT),
-            "A's requestsInbox should be equal to B's requestsOutbox"
+            sendingBridge.readRollingHash(receivingBridgeAddress, IScopedCallable.RollingHashType.REQUESTS_IN),
+            receivingBridge.readRollingHash(sendingBridgeAddress, IScopedCallable.RollingHashType.REQUESTS_OUT),
+            "sendingBridge's requestsInbox should be equal to receivingBridge's requestsOutbox"
         );
 
         // Check alice's balance decreased

@@ -26,7 +26,7 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
      *
      */
     event Received(bytes32 indexed receiveId, address gateway);
-    event ExecutionSuccess(bytes32 indexed receiveId);
+    event ExecutionSuccess(bytes32 indexed receiveId, bytes response);
     event GatewayAdded(address indexed gateway);
     event GatewayRemoved(address indexed gateway);
     event RemoteRegistered(bytes remote);
@@ -105,10 +105,10 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
         }
 
         // Interoperable address of the remote bridge, revert if not registered
-        bytes memory bridge = getRemoteBridge(recipient);
+        bytes memory receivingBridge = getRemoteBridge(recipient);
 
-        // Interoperable address of the bridge
-        bytes memory sender = bridgeId();
+        // Interoperable address of the msg.sender
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
 
         // Wrap the payload with the nonce, sender, and recipient
         bytes memory wrappedPayload = abi.encode(++_nonce, sender, recipient, msg.value, payload);
@@ -117,11 +117,11 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
         bytes32 requestHash = keccak256(wrappedPayload);
 
         // Update rolling hash with requestHash
-        _updateRollingHash(bridge, requestHash, RollingHashType.REQUESTS_OUT);
+        _updateRollingHash(receivingBridge, requestHash, RollingHashType.REQUESTS_OUT);
 
         // sendId is the storage location of the response for the calling function to synchronously read
         // This allows compatibility with the ERC7786 spec since we can't explicitly return bytes
-        sendId = _calcStorageKey(bridge, requestHash);
+        sendId = _calcStorageKey(receivingBridge, requestHash);
 
         emit MessageSent(sendId, sender, recipient, payload, msg.value, attributes);
     }
@@ -138,47 +138,48 @@ contract SharedBridge is ScopedCallable, IERC7786GatewaySource, IERC7786Receiver
         // Only gateways can call this function
         if (!_gateways.contains(msg.sender)) revert ERC7786GatewayNotRegistered(msg.sender);
 
+        // Get the bridge address of the sender
+        bytes memory sendingBridge = getRemoteBridge(sender);
+
         // Recompute the request hash from the *wrapped* payload
         bytes32 requestHash = keccak256(payload);
 
-        // Parse payload
-        (, bytes memory originalSender, bytes memory recipient, uint256 value, bytes memory unwrappedPayload) =
-            abi.decode(payload, (uint256, bytes, bytes, uint256, bytes));
-
-        // The receiveId should match the sendId
-        if (receiveId != _calcStorageKey(recipient, requestHash)) {
+        // The receiveId should match the sendId from sendMessage
+        if (receiveId != _calcStorageKey(this.bridgeAddress(), requestHash)) {
             revert InvalidReceiveId(receiveId);
         }
 
-        // The recipient should be the bridgeId
-        if (keccak256(recipient) != keccak256(bridgeId())) revert InvalidRecipient(receiveId);
+        // Parse payload
+        (, bytes memory originalSender, bytes memory recipient, uint256 value, bytes memory data) =
+            abi.decode(payload, (uint256, bytes, bytes, uint256, bytes));
 
         // The sender should match the original sender
         if (keccak256(sender) != keccak256(originalSender)) revert InvalidSender(receiveId);
 
         // Update rolling hash with requestHash
-        _updateRollingHash(sender, requestHash, RollingHashType.REQUESTS_IN);
+        _updateRollingHash(sendingBridge, requestHash, RollingHashType.REQUESTS_IN);
 
-        // Decode the request from the payload
-        Request memory request = abi.decode(unwrappedPayload, (Request));
+        // Get the recipient address to call
+        (uint256 chainId, address recipientAddress) = InteroperableAddress.parseEvmV1(recipient);
+        if (chainId != block.chainid) revert InvalidRecipient(receiveId);
 
         // Execute local call
-        (bool success, bytes memory response) = request.to.call{gas: request.gasLimit, value: value}(request.data);
+        (bool success, bytes memory response) = recipientAddress.call{value: value}(data); // todo gaslimit
 
         if (!success) revert ExecutionFailed(receiveId);
 
         // Update rolling response outbox hash
-        _updateRollingHash(sender, keccak256(response), RollingHashType.RESPONSES_OUT);
+        _updateRollingHash(sendingBridge, keccak256(response), RollingHashType.RESPONSES_OUT);
 
         // Emit for sequencer to populate source-chain's responsesInboxValues
-        emit ExecutionSuccess(receiveId);
+        emit ExecutionSuccess(receiveId, response);
 
         // // Return the selector of the executeMessage function as required by the ERC7786 spec
         return IERC7786Receiver.receiveMessage.selector;
     }
 
     // =================================================== Getters ===================================================
-    function bridgeId() public view returns (bytes memory) {
+    function bridgeAddress() public view returns (bytes memory) {
         return InteroperableAddress.formatEvmV1(block.chainid, address(this));
     }
 
